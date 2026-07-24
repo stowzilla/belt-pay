@@ -1,0 +1,14 @@
+output "stripe_secret_arn" {
+  description = "ARN of the Stripe secrets in Secrets Manager"
+  value       = aws_secretsmanager_secret.stripe.arn
+}
+
+output "stripe_secret_name" {
+  description = "Name of the Stripe secret (for Lambda env vars)"
+  value       = local.secret_name
+}
+
+output "read_secrets_policy_arn" {
+  description = "ARN of the IAM policy for reading Stripe secrets"
+  value       = aws_iam_policy.read_stripe_secrets.arn
+}

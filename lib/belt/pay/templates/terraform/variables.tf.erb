@@ -1,0 +1,23 @@
+variable "app_name" {
+  description = "Application name"
+  type        = string
+}
+
+variable "environment" {
+  description = "Environment name (dev, staging, prod)"
+  type        = string
+}
+
+variable "stripe_secret_key" {
+  description = "Stripe secret API key (initial value — update via console/CI)"
+  type        = string
+  default     = "sk_test_PLACEHOLDER"
+  sensitive   = true
+}
+
+variable "stripe_webhook_secret" {
+  description = "Stripe webhook signing secret (initial value — update via console/CI)"
+  type        = string
+  default     = "whsec_PLACEHOLDER"
+  sensitive   = true
+}
