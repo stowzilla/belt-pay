@@ -67,6 +67,17 @@ RSpec.describe Belt::Pay::Subscription do
                                               hash_including(customer_id: 'cust-123', subscription_id: 'sub_new_789'))
       described_class.create(customer, price_id: 'price_xxx')
     end
+
+    context 'when provider raises' do
+      it 'propagates the error' do
+        allow(provider).to receive(:create_subscription)
+          .and_raise(Stripe::InvalidRequestError.new('No payment method', 'subscription'))
+
+        expect {
+          described_class.create(customer, price_id: 'price_xxx')
+        }.to raise_error(Stripe::InvalidRequestError)
+      end
+    end
   end
 
   describe '.cancel' do

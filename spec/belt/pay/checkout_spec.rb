@@ -109,5 +109,32 @@ RSpec.describe Belt::Pay::Checkout do
         success_url: 'https://app.example.com/success',
         cancel_url: 'https://app.example.com/cancel')
     end
+
+    context 'when CustomerProvisioner raises' do
+      it 'propagates the error' do
+        allow(provisioner).to receive(:call).and_raise(Belt::Pay::Error, 'Provisioning failed')
+
+        expect {
+          described_class.create(customer,
+            line_items: [{ price: 'price_xxx', quantity: 1 }],
+            success_url: 'https://app.example.com/success',
+            cancel_url: 'https://app.example.com/cancel')
+        }.to raise_error(Belt::Pay::Error, 'Provisioning failed')
+      end
+    end
+
+    context 'when provider raises' do
+      it 'propagates the error' do
+        allow(provider).to receive(:create_checkout_session)
+          .and_raise(Stripe::InvalidRequestError.new('Invalid price', 'price'))
+
+        expect {
+          described_class.create(customer,
+            line_items: [{ price: 'price_invalid', quantity: 1 }],
+            success_url: 'https://app.example.com/success',
+            cancel_url: 'https://app.example.com/cancel')
+        }.to raise_error(Stripe::InvalidRequestError)
+      end
+    end
   end
 end

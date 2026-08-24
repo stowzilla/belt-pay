@@ -279,4 +279,37 @@ RSpec.describe Belt::Pay::WebhookHandler do
       expect { described_class.process(payload: '{}', signature: 'sig') }.not_to raise_error
     end
   end
+
+  describe 'resolve_customer_from_subscription (rescue branch)' do
+    # When Stripe::Subscription.retrieve raises, the handler should log and return nil
+    # (not blow up the whole webhook). Test via invoice.paid with no invoice metadata.
+    let(:invoice) do
+      double('Invoice',
+             id: 'in_rescue_test',
+             subscription: 'sub_unknown',
+             metadata: double(app_customer_id: nil, :[] => nil),
+             amount_paid: 2000,
+             billing_reason: 'subscription_cycle')
+    end
+    let(:event) { build_event(type: 'invoice.paid', object: invoice) }
+
+    before { allow(provider).to receive(:verify_webhook).and_return(event) }
+
+    it 'rescues Stripe errors and logs a warning instead of raising' do
+      allow(provider).to receive(:ensure_api_key!)
+      allow(::Stripe::Subscription).to receive(:retrieve)
+        .with('sub_unknown')
+        .and_raise(::Stripe::InvalidRequestError.new('No such subscription', 'id'))
+
+      expect(Belt::Pay).to receive(:log).with(
+        :warn,
+        'Belt::Pay::WebhookHandler: failed to resolve customer from subscription',
+        hash_including(subscription_id: 'sub_unknown')
+      )
+
+      # Should not raise — returns nil and skips transaction recording
+      expect(Belt::Pay::Transaction).not_to receive(:record_renewal)
+      expect { described_class.process(payload: '{}', signature: 'sig') }.not_to raise_error
+    end
+  end
 end
