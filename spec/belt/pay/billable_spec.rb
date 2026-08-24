@@ -59,4 +59,143 @@ RSpec.describe Belt::Pay::Billable do
       expect(customer.active_subscription?).to be true
     end
   end
+
+  describe '#subscribe!' do
+    let(:subscribe_result) { { subscription_id: 'sub_new_789', status: 'active' } }
+
+    before do
+      allow(Belt::Pay).to receive(:subscribe).and_return(subscribe_result)
+    end
+
+    it 'delegates to Belt::Pay.subscribe with price_id and metadata' do
+      expect(Belt::Pay).to receive(:subscribe).with(
+        customer, price_id: 'price_xxx', metadata: { plan: 'pro' }
+      ).and_return(subscribe_result)
+
+      customer.subscribe!(price_id: 'price_xxx', metadata: { plan: 'pro' })
+    end
+
+    it 'sets pay_subscription_id from the result' do
+      customer.subscribe!(price_id: 'price_xxx')
+      expect(customer.pay_subscription_id).to eq('sub_new_789')
+    end
+
+    it 'calls save after setting the subscription id' do
+      expect(customer).to receive(:save).with(validate: false).and_return(true)
+      customer.subscribe!(price_id: 'price_xxx')
+    end
+
+    it 'returns the subscription result' do
+      result = customer.subscribe!(price_id: 'price_xxx')
+      expect(result).to eq(subscribe_result)
+    end
+
+    it 'defaults metadata to empty hash' do
+      expect(Belt::Pay).to receive(:subscribe).with(
+        customer, price_id: 'price_xxx', metadata: {}
+      ).and_return(subscribe_result)
+
+      customer.subscribe!(price_id: 'price_xxx')
+    end
+  end
+
+  describe '#cancel_subscription!' do
+    before do
+      customer.pay_subscription_id = 'sub_123'
+      allow(Belt::Pay).to receive(:cancel_subscription)
+    end
+
+    it 'delegates to Belt::Pay.cancel_subscription' do
+      expect(Belt::Pay).to receive(:cancel_subscription).with(customer, immediately: false)
+      customer.cancel_subscription!
+    end
+
+    it 'passes immediately flag' do
+      expect(Belt::Pay).to receive(:cancel_subscription).with(customer, immediately: true)
+      customer.cancel_subscription!(immediately: true)
+    end
+
+    context 'when immediately: false (default)' do
+      it 'does not nil out pay_subscription_id' do
+        customer.cancel_subscription!
+        expect(customer.pay_subscription_id).to eq('sub_123')
+      end
+
+      it 'does not call save' do
+        expect(customer).not_to receive(:save).with(validate: false)
+        customer.cancel_subscription!
+      end
+    end
+
+    context 'when immediately: true' do
+      it 'nils out pay_subscription_id' do
+        customer.cancel_subscription!(immediately: true)
+        expect(customer.pay_subscription_id).to be_nil
+      end
+
+      it 'calls save' do
+        expect(customer).to receive(:save).with(validate: false).and_return(true)
+        customer.cancel_subscription!(immediately: true)
+      end
+    end
+  end
+
+  describe '#billing_portal_url' do
+    it 'delegates to Belt::Pay.billing_portal with return_url' do
+      expect(Belt::Pay).to receive(:billing_portal).with(
+        customer, return_url: 'https://app.example.com/settings'
+      ).and_return({ url: 'https://billing.stripe.com/p/session/xxx' })
+
+      result = customer.billing_portal_url(return_url: 'https://app.example.com/settings')
+      expect(result).to eq({ url: 'https://billing.stripe.com/p/session/xxx' })
+    end
+  end
+
+  describe '#attach_payment_method' do
+    it 'delegates to Belt::Pay.attach_payment_method' do
+      result = double('Result')
+      expect(Belt::Pay).to receive(:attach_payment_method).with(customer, 'pm_xxx').and_return(result)
+
+      expect(customer.attach_payment_method('pm_xxx')).to eq(result)
+    end
+  end
+
+  describe '#create_setup_intent' do
+    it 'delegates to Belt::Pay.create_setup_intent' do
+      result = double('Result', client_secret: 'seti_xxx_secret_yyy')
+      expect(Belt::Pay).to receive(:create_setup_intent).with(customer).and_return(result)
+
+      expect(customer.create_setup_intent).to eq(result)
+    end
+  end
+
+  describe '#payment_method_details' do
+    let(:provider) { instance_double(Belt::Pay::Providers::Stripe) }
+
+    before do
+      allow(Belt::Pay).to receive(:provider).and_return(provider)
+    end
+
+    it 'delegates to the provider' do
+      details = { last4: '4242', brand: 'visa', exp_month: 12, exp_year: 2027 }
+      expect(provider).to receive(:payment_method_details).with(customer).and_return(details)
+
+      expect(customer.payment_method_details).to eq(details)
+    end
+
+    it 'returns nil when provider returns nil' do
+      expect(provider).to receive(:payment_method_details).with(customer).and_return(nil)
+
+      expect(customer.payment_method_details).to be_nil
+    end
+  end
+
+  describe '#transactions' do
+    it 'delegates to Transaction.for_customer with the customer id' do
+      transactions = [double('Txn1'), double('Txn2')]
+      expect(Belt::Pay::Transaction).to receive(:for_customer).with('cust-123').and_return(transactions)
+
+      expect(customer.transactions).to eq(transactions)
+    end
+  end
 end
