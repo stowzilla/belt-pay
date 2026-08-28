@@ -2,6 +2,8 @@
 
 Payments and subscriptions for [Belt](https://github.com/stowzilla/belt) applications via Stripe.
 
+> **New to Belt Pay?** Check out the [Getting Started Guide](docs/getting-started.md) for a complete walkthrough.
+
 ## Installation
 
 Add to your Gemfile:
