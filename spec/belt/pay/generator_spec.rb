@@ -1,6 +1,8 @@
 # frozen_string_literal: true
 
-RSpec.describe Belt::Pay::Generators::PayGenerator do
+require 'belt/generators/pay_generator'
+
+RSpec.describe Belt::Generators::PayGenerator do
   # Generator specs use a temporary directory to verify file creation
   # without touching real project files.
 
