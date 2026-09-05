@@ -19,6 +19,67 @@ bundle install
 belt generate pay
 ```
 
+## Defining Plans (Convention over Configuration)
+
+Declare your plans once — their prices, limits, and feature flags live in code, not
+scattered across config. Look them up by a symbolic key everywhere else.
+
+```ruby
+# config/initializers/pay.rb (or wherever you boot)
+Belt::Pay.plans do
+  plan :free do
+    name  'Free'
+    description 'For small teams getting started'
+    limit :projects, 1
+    limit :seats,    3
+  end
+
+  plan :pro do
+    name        'Pro'
+    description 'For growing teams'
+    featured                                   # highlight this plan in your UI
+    price 49,  interval: :month, stripe_price: ENV['STRIPE_PRO_MONTH']
+    price 490, interval: :year,  stripe_price: ENV['STRIPE_PRO_YEAR']
+    limit :projects, :unlimited
+    limit :seats,    :unlimited
+    feature :sso, :audit_logs
+  end
+end
+```
+
+Then use the plans:
+
+```ruby
+# Subscribe by plan key — belt-pay resolves the Stripe price for the interval
+customer.subscribe!(plan: :pro, interval: :year)
+
+# Look plans up
+Belt::Pay.plan(:pro).amount(interval: :month)   # => 49.0
+Belt::Pay.plans.paid                             # => [pro, ...]
+Belt::Pay.plans.featured                         # => the :pro plan
+Belt::Pay.plans.to_a                             # => [{ key:, name:, prices:, limits:, ... }] for your frontend
+
+# Gate features and enforce limits
+customer.on_plan?(:pro)                          # => true
+customer.plan_allows?(:sso)                      # => true
+customer.within_limit?(:projects, current_count) # => false once the ceiling is hit
+```
+
+### Plan API
+
+| Method | Description |
+|--------|-------------|
+| `Belt::Pay.plans { ... }` | Declare plans (block) or read the registry |
+| `Belt::Pay.plan(:key)` | Look up one plan (nil if undeclared) |
+| `Belt::Pay.plan_for_price(id)` | Find the plan owning a Stripe price ID |
+| `plan.amount(interval:)` | Price in whole currency units |
+| `plan.amount_cents(interval:)` | Price in cents |
+| `plan.stripe_price_id(interval:)` | Stripe price ID for an interval |
+| `plan.limit(:name)` | Read a limit (Integer, `:unlimited`, or nil) |
+| `plan.allows?(:name, usage)` | Is `usage` under the limit? |
+| `plan.includes_feature?(:name)` | Does the plan unlock a feature? |
+| `plan.to_h` | Serialize for API/frontend |
+
 ## What You Get
 
 ### From the gem (no generation needed)
