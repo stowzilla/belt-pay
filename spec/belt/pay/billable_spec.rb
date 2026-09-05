@@ -39,6 +39,11 @@ RSpec.describe Belt::Pay::Billable do
       customer.pay_payment_method_id = 'pm_123'
       expect(customer.pay_payment_method_id).to eq('pm_123')
     end
+
+    it 'adds pay_plan accessor' do
+      customer.pay_plan = 'pro'
+      expect(customer.pay_plan).to eq('pro')
+    end
   end
 
   describe '#ensure_pay_customer!' do
@@ -69,10 +74,19 @@ RSpec.describe Belt::Pay::Billable do
 
     it 'delegates to Belt::Pay.subscribe with price_id and metadata' do
       expect(Belt::Pay).to receive(:subscribe).with(
-        customer, price_id: 'price_xxx', metadata: { plan: 'pro' }
+        customer, plan: nil, price_id: 'price_xxx', interval: :month, metadata: { plan: 'pro' }
       ).and_return(subscribe_result)
 
       customer.subscribe!(price_id: 'price_xxx', metadata: { plan: 'pro' })
+    end
+
+    it 'delegates to Belt::Pay.subscribe with a plan key and records the plan' do
+      expect(Belt::Pay).to receive(:subscribe).with(
+        customer, plan: :pro, price_id: nil, interval: :year, metadata: {}
+      ).and_return(subscribe_result)
+
+      customer.subscribe!(plan: :pro, interval: :year)
+      expect(customer.pay_plan).to eq('pro')
     end
 
     it 'sets pay_subscription_id from the result' do
@@ -92,10 +106,60 @@ RSpec.describe Belt::Pay::Billable do
 
     it 'defaults metadata to empty hash' do
       expect(Belt::Pay).to receive(:subscribe).with(
-        customer, price_id: 'price_xxx', metadata: {}
+        customer, plan: nil, price_id: 'price_xxx', interval: :month, metadata: {}
       ).and_return(subscribe_result)
 
       customer.subscribe!(price_id: 'price_xxx')
+    end
+  end
+
+  describe 'plan awareness' do
+    before do
+      Belt::Pay.plans do
+        plan(:free) { name 'Free'; limit :projects, 1 }
+        plan(:pro) do
+          name 'Pro'
+          limit :projects, :unlimited
+          feature :sso
+        end
+      end
+    end
+
+    it 'returns nil plan when not subscribed to one' do
+      expect(customer.plan).to be_nil
+    end
+
+    it 'resolves the plan from pay_plan' do
+      customer.pay_plan = 'pro'
+      expect(customer.plan.key).to eq(:pro)
+    end
+
+    it 'answers on_plan?' do
+      customer.pay_plan = 'pro'
+      expect(customer.on_plan?(:pro)).to be true
+      expect(customer.on_plan?(:free)).to be false
+    end
+
+    it 'gates features via plan_allows?' do
+      customer.pay_plan = 'pro'
+      expect(customer.plan_allows?(:sso)).to be true
+      customer.pay_plan = 'free'
+      expect(customer.plan_allows?(:sso)).to be false
+    end
+
+    it 'checks numeric limits via within_limit?' do
+      customer.pay_plan = 'free'
+      expect(customer.within_limit?(:projects, 0)).to be true
+      expect(customer.within_limit?(:projects, 1)).to be false
+    end
+
+    it 'treats unlimited limits as always within' do
+      customer.pay_plan = 'pro'
+      expect(customer.within_limit?(:projects, 999)).to be true
+    end
+
+    it 'treats no plan as unlimited' do
+      expect(customer.within_limit?(:projects, 999)).to be true
     end
   end
 

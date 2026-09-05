@@ -21,5 +21,6 @@ RSpec.configure do |config|
   config.before do
     Belt::Pay.reset_configuration!
     Belt::Pay.reset_provider!
+    Belt::Pay.reset_plans!
   end
 end
