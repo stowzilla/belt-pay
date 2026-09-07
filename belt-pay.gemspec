@@ -24,6 +24,6 @@ Gem::Specification.new do |spec|
   spec.files = Dir['lib/**/*', 'lambda/**/*', 'LICENSE', 'README.md', 'CHANGELOG.md']
   spec.require_paths = ['lib']
 
-  spec.add_dependency 'belt', '~> 0.2'
+  spec.add_dependency 'belt', '>= 0.2'
   spec.add_dependency 'stripe', '~> 13.0'
 end

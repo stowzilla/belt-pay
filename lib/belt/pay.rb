@@ -2,6 +2,7 @@
 
 require_relative 'pay/version'
 require_relative 'pay/configuration'
+require_relative 'pay/plan_registry'
 require_relative 'pay/transaction'
 require_relative 'pay/billable'
 require_relative 'pay/checkout'
@@ -31,6 +32,40 @@ module Belt
 
       def reset_configuration!
         @configuration = Configuration.new
+      end
+
+      # --- Plans (convention-over-configuration subscription plan DSL) ---
+
+      # The plan registry. Pass a block to declare plans, or call with no block
+      # to read the registry.
+      #
+      # @example
+      #   Belt::Pay.plans do
+      #     plan(:pro) { name 'Pro'; price 49, stripe_price: 'price_xxx' }
+      #   end
+      #
+      # @return [Belt::Pay::PlanRegistry]
+      def plans(&block)
+        @plans ||= PlanRegistry.new
+        @plans.instance_eval(&block) if block
+        @plans
+      end
+
+      # Look up a single plan by key. Returns nil if undeclared.
+      # @return [Belt::Pay::Plan, nil]
+      def plan(key)
+        plans.find(key)
+      end
+
+      # Find the declared plan backing a given Stripe price ID.
+      # @return [Belt::Pay::Plan, nil]
+      def plan_for_price(price_id)
+        plans.find_by_stripe_price(price_id)
+      end
+
+      # Reset the plan registry (useful for tests).
+      def reset_plans!
+        @plans = PlanRegistry.new
       end
 
       # --- Convenience API (provider-agnostic names) ---
@@ -66,12 +101,21 @@ module Belt
       end
 
       # Subscribe a customer to a plan.
+      #
+      # Pass either a declared plan (`plan:`) — which resolves to the right Stripe
+      # price for the interval — or a raw provider `price_id:`.
+      #
       # @param customer [Object] Your app's user/customer model instance
-      # @param price_id [String] Provider price/plan ID
+      # @param plan [Symbol, String, nil] A declared plan key (see Belt::Pay.plans)
+      # @param price_id [String, nil] Provider price/plan ID (overrides plan lookup)
+      # @param interval [Symbol] Billing interval to pick from the plan (default :month)
       # @param metadata [Hash] Additional metadata
       # @return [Hash] { subscription_id:, status: }
-      def subscribe(customer, price_id:, metadata: {})
-        Subscription.create(customer, price_id: price_id, metadata: metadata)
+      def subscribe(customer, plan: nil, price_id: nil, interval: :month, metadata: {})
+        price_id ||= resolve_plan_price(plan, interval)
+        meta = metadata.dup
+        meta[:plan] ||= plan.to_s if plan
+        Subscription.create(customer, price_id: price_id, metadata: meta)
       end
 
       # Cancel a customer's subscription.
@@ -110,6 +154,17 @@ module Belt
       end
 
       private
+
+      # Resolve a plan key (+ interval) to its Stripe price ID.
+      def resolve_plan_price(plan_key, interval)
+        return nil if plan_key.nil?
+
+        pl = plans.find!(plan_key)
+        price_id = pl.stripe_price_id(interval: interval)
+        raise ConfigurationError, "Plan #{plan_key.inspect} has no Stripe price for interval #{interval.inspect}" unless price_id
+
+        price_id
+      end
 
       def resolve_provider
         case configuration.provider

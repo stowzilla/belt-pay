@@ -21,7 +21,7 @@ module Belt
       extend ActiveSupport::Concern
 
       included do
-        attr_accessor :pay_customer_id, :pay_subscription_id, :pay_payment_method_id
+        attr_accessor :pay_customer_id, :pay_subscription_id, :pay_payment_method_id, :pay_plan
       end
 
       # Ensure this customer has a provider customer account.
@@ -45,14 +45,58 @@ module Belt
       end
 
       # Subscribe to a plan.
-      # @param price_id [String] Provider price ID
+      #
+      # Pass either a declared plan key (`plan:`) or a raw `price_id:`.
+      # When a plan key is given, the customer's `pay_plan` is recorded so
+      # limits/features can be checked later without a Stripe round-trip.
+      #
+      # @param plan [Symbol, String, nil] A declared plan key (see Belt::Pay.plans)
+      # @param price_id [String, nil] Provider price ID (overrides plan lookup)
+      # @param interval [Symbol] Billing interval to pick from the plan (default :month)
       # @param metadata [Hash] Additional metadata to store on the subscription
       # @return [Hash] { subscription_id:, status: }
-      def subscribe!(price_id:, metadata: {})
-        result = Belt::Pay.subscribe(self, price_id: price_id, metadata: metadata)
+      def subscribe!(plan: nil, price_id: nil, interval: :month, metadata: {})
+        result = Belt::Pay.subscribe(self, plan: plan, price_id: price_id,
+                                           interval: interval, metadata: metadata)
         self.pay_subscription_id = result[:subscription_id]
+        self.pay_plan = plan.to_s if plan
         save(validate: false)
         result
+      end
+
+      # The declared plan this customer is currently on (or nil).
+      # @return [Belt::Pay::Plan, nil]
+      def plan
+        Belt::Pay.plan(pay_plan) if pay_plan
+      end
+
+      # Is this customer on a given plan?
+      # @param plan_key [Symbol, String]
+      # @return [Boolean]
+      def on_plan?(plan_key)
+        pay_plan.to_s == plan_key.to_s
+      end
+
+      # Does this customer's plan allow a named feature?
+      # @param feature_name [Symbol, String]
+      # @return [Boolean]
+      def plan_allows?(feature_name)
+        p = plan
+        return false unless p
+
+        p.includes_feature?(feature_name)
+      end
+
+      # Is the given usage under this customer's plan limit for `limit_name`?
+      # Returns true when there is no plan or the limit is unlimited/undeclared.
+      # @param limit_name [Symbol, String]
+      # @param usage [Integer] Current usage count
+      # @return [Boolean]
+      def within_limit?(limit_name, usage)
+        p = plan
+        return true unless p
+
+        p.allows?(limit_name, usage)
       end
 
       # Check if customer has an active subscription.
