@@ -1,6 +1,6 @@
 # Changelog
 
-## 0.1.0 — 2026-09-05
+## 0.0.2 — 2026-09-05
 
 - **Plan DSL (convention over configuration).** Declare subscription plans, their
   prices (per interval), limits, and feature flags once via `Belt::Pay.plans do ... end`,
