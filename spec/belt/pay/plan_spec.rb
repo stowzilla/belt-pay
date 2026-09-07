@@ -23,6 +23,10 @@ RSpec.describe Belt::Pay::Plan do
       expect(plan.featured?).to be true
     end
 
+    it 'un-features a plan when featured is set to false' do
+      expect { plan.featured(false) }.to change(plan, :featured?).from(true).to(false)
+    end
+
     it 'stores prices in cents per interval' do
       expect(plan.amount_cents(interval: :month)).to eq(4900)
       expect(plan.amount_cents(interval: :year)).to eq(49_000)

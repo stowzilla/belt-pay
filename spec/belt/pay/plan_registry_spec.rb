@@ -101,6 +101,15 @@ RSpec.describe Belt::Pay::PlanRegistry do
       expect(registry.find('pro').key).to eq(:pro)
       expect(registry.find(:pro).key).to eq(:pro)
     end
+
+    it 'does not match a plan whose interval has a nil Stripe price' do
+      registry.plan(:free) { name 'Free'; price 0, interval: :month } # no stripe_price
+      registry.plan(:pro)  { name 'Pro';  price 49, interval: :month, stripe_price: 'price_pro' }
+
+      # The :free plan has a nil stripe_price for :month — it must never be
+      # returned, and must not raise, when resolving a real price id.
+      expect(registry.find_by_stripe_price('price_pro').key).to eq(:pro)
+    end
   end
 end
 
