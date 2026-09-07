@@ -111,6 +111,17 @@ RSpec.describe Belt::Pay::Billable do
 
       customer.subscribe!(price_id: 'price_xxx')
     end
+
+    it 'does not record pay_plan when subscribing with a raw price_id' do
+      customer.subscribe!(price_id: 'price_xxx')
+      expect(customer.pay_plan).to be_nil
+    end
+
+    it 'coerces a string plan key when recording pay_plan' do
+      allow(Belt::Pay).to receive(:subscribe).and_return(subscribe_result)
+      customer.subscribe!(plan: 'enterprise')
+      expect(customer.pay_plan).to eq('enterprise')
+    end
   end
 
   describe 'plan awareness' do
@@ -160,6 +171,26 @@ RSpec.describe Belt::Pay::Billable do
 
     it 'treats no plan as unlimited' do
       expect(customer.within_limit?(:projects, 999)).to be true
+    end
+
+    it 'returns nil plan when pay_plan references an undeclared plan' do
+      customer.pay_plan = 'ghost'
+      expect(customer.plan).to be_nil
+    end
+
+    it 'denies features when the recorded plan is undeclared' do
+      customer.pay_plan = 'ghost'
+      expect(customer.plan_allows?(:sso)).to be false
+    end
+
+    it 'treats an undeclared recorded plan as within limit' do
+      customer.pay_plan = 'ghost'
+      expect(customer.within_limit?(:projects, 999)).to be true
+    end
+
+    it 'accepts string arguments to on_plan?' do
+      customer.pay_plan = 'pro'
+      expect(customer.on_plan?('pro')).to be true
     end
   end
 

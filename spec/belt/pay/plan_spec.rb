@@ -88,6 +88,10 @@ RSpec.describe Belt::Pay::Plan do
       plan.limit(:projects, '10')
       expect(plan.limit(:projects)).to eq(10)
     end
+
+    it 'raises when a limit value is not a valid integer' do
+      expect { plan.limit(:projects, 'lots') }.to raise_error(ArgumentError)
+    end
   end
 
   describe 'features' do
@@ -102,6 +106,67 @@ RSpec.describe Belt::Pay::Plan do
     it 'reports missing features' do
       expect(plan.includes_feature?(:audit_logs)).to be false
     end
+
+    it 'accepts multiple features in one call' do
+      plan.feature(:audit_logs, :priority_support)
+      expect(plan.features).to contain_exactly(:sso, :audit_logs, :priority_support)
+    end
+
+    it 'accumulates features across multiple calls' do
+      plan.feature(:audit_logs)
+      plan.feature(:webhooks)
+      expect(plan.features).to contain_exactly(:sso, :audit_logs, :webhooks)
+    end
+
+    it 'coerces string feature names to symbols' do
+      plan.feature('teams')
+      expect(plan.includes_feature?('teams')).to be true
+      expect(plan.includes_feature?(:teams)).to be true
+    end
+
+    it 'returns a copy of features that cannot mutate internal state' do
+      plan.features << :hacked
+      expect(plan.includes_feature?(:hacked)).to be false
+    end
+  end
+
+  describe 'metadata' do
+    subject(:plan) { described_class.new(:pro) }
+
+    it 'defaults to an empty hash' do
+      expect(plan.metadata).to eq({})
+    end
+
+    it 'merges metadata across calls' do
+      plan.metadata(trial_days: 14)
+      plan.metadata(tier: 'gold')
+      expect(plan.metadata).to eq(trial_days: 14, tier: 'gold')
+    end
+
+    it 'reads without mutating when called with no args' do
+      plan.metadata(trial_days: 14)
+      expect(plan.metadata).to eq(trial_days: 14)
+    end
+  end
+
+  describe 'amounts with no declared price' do
+    subject(:plan) { described_class.new(:free) }
+
+    it 'reports zero cents' do
+      expect(plan.amount_cents).to eq(0)
+    end
+
+    it 'reports zero dollars' do
+      expect(plan.amount).to eq(0.0)
+    end
+
+    it 'reports no stripe price id' do
+      expect(plan.stripe_price_id).to be_nil
+    end
+
+    it 'reports no intervals' do
+      expect(plan.intervals).to eq([])
+    end
   end
 
   describe '#free?' do
@@ -112,6 +177,25 @@ RSpec.describe Belt::Pay::Plan do
     it 'is true when all prices are zero' do
       plan = described_class.new(:free).tap { |p| p.price(0) }
       expect(plan.free?).to be true
+    end
+
+    it 'is false when at least one interval has a non-zero price' do
+      plan = described_class.new(:pro).tap do |p|
+        p.price(0,  interval: :month)
+        p.price(99, interval: :year)
+      end
+      expect(plan.free?).to be false
+    end
+  end
+
+  describe 'limits accessor' do
+    subject(:plan) do
+      described_class.new(:pro).tap { |p| p.limit(:projects, 5) }
+    end
+
+    it 'returns a copy that cannot mutate internal state' do
+      plan.limits[:projects] = 999
+      expect(plan.limit(:projects)).to eq(5)
     end
   end
 
@@ -135,6 +219,20 @@ RSpec.describe Belt::Pay::Plan do
       expect(h[:limits]).to eq(projects: 25, seats: 'unlimited')
       expect(h[:features]).to eq(['sso'])
       expect(h[:free]).to be false
+    end
+
+    it 'serializes prices per interval in cents' do
+      expect(plan.to_h[:prices]).to eq(
+        month: { amount_cents: 4900, stripe_price: 'price_x' }
+      )
+    end
+
+    it 'defaults name to the capitalized key when none is set' do
+      expect(described_class.new(:enterprise).to_h[:name]).to eq('Enterprise')
+    end
+
+    it 'serializes an undeclared description as nil' do
+      expect(described_class.new(:basic).to_h[:description]).to be_nil
     end
   end
 end
