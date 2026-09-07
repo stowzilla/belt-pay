@@ -73,6 +73,35 @@ RSpec.describe Belt::Pay::PlanRegistry do
       expect(registry.empty?).to be true
     end
   end
+
+  describe 'nil-safety and empty states' do
+    it 'returns nil when finding with a nil key' do
+      expect(registry.find(nil)).to be_nil
+    end
+
+    it 'returns nil when finding by a nil price id' do
+      expect(registry.find_by_stripe_price(nil)).to be_nil
+    end
+
+    it 'returns nil for featured when no plan is featured' do
+      registry.plan(:free) { name 'Free' }
+      expect(registry.featured).to be_nil
+    end
+
+    it 'reports empty? true before any plans are declared' do
+      expect(registry.empty?).to be true
+    end
+
+    it 'returns an empty array from to_a when no plans are declared' do
+      expect(registry.to_a).to eq([])
+    end
+
+    it 'accepts string keys interchangeably with symbols' do
+      registry.plan('pro') { name 'Pro' }
+      expect(registry.find('pro').key).to eq(:pro)
+      expect(registry.find(:pro).key).to eq(:pro)
+    end
+  end
 end
 
 RSpec.describe 'Belt::Pay plan module API' do
