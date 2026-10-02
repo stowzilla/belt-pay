@@ -108,18 +108,36 @@ terraform apply
 
 ### Add Stripe Keys to Secrets Manager
 
-After deployment, add your Stripe credentials to the secret created by Terraform:
+After deployment, run the Belt Pay task with the environment selected through
+`BELT_ENV`:
 
 ```bash
-aws secretsmanager put-secret-value \
-  --secret-id myapp-dev-stripe \
-  --secret-string '{
-    "stripe_secret_key": "sk_test_...",
-    "stripe_webhook_secret": "whsec_..."
-  }'
+BELT_ENV=dev belt pay:setup
 ```
 
-> **Note:** You'll get the webhook secret in Step 5.
+The task prompts without echo for both values and writes JSON with this shape:
+
+```json
+{
+  "stripe_secret_key": "sk_test_...",
+  "stripe_webhook_secret": "whsec_..."
+}
+```
+
+The task detects the generated `<app>-<env>-stripe` name and the environment's AWS
+profile and region. Values go directly through the AWS SDK, so they do not appear in
+shell history, command arguments, or a temporary file. Leave either prompt blank to
+preserve its current value. Use `APP_NAME`, `BELT_PAY_SECRET_NAME`, `AWS_PROFILE`, or
+`AWS_REGION` to override detection.
+
+For advanced use, `BELT_ENV=dev belt pay:edit` opens the complete JSON in
+`$VISUAL` or `$EDITOR`, and `BELT_ENV=dev belt pay:show` intentionally prints the
+stored value. Standard Rake arguments also work when you do not want to set `BELT_ENV`:
+`belt 'pay:setup[dev]'`.
+
+> **Note:** Stripe provides the `stripe_webhook_secret` when you create the endpoint
+> in Step 5. Leave that prompt blank initially, then run
+> `BELT_ENV=dev belt pay:setup` again after Stripe gives you the signing secret.
 
 ## Step 5: Configure Stripe Webhooks
 
