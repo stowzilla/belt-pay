@@ -316,10 +316,10 @@ module Belt
                end
 
             3. Add your Stripe API keys to Secrets Manager:
-               belt-pay secrets:edit <env>
+               belt-pay secrets:setup <env>
 
-               Secret name: <app_name>-<env>-stripe
-               Keys: stripe_secret_key, stripe_webhook_secret
+               Values are prompted without echo. Leave the webhook secret blank
+               until Stripe gives it to you, then run setup again.
 
             4. Deploy:
                belt apply <env>

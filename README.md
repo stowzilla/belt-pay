@@ -167,27 +167,39 @@ The Stripe secret should contain:
 }
 ```
 
-### Inspecting and Editing Secrets
+### Setting Up and Managing Secrets
 
-Belt Pay includes Rails-like commands for the environment-specific Stripe secret that
+Belt Pay includes a guided command for the environment-specific Stripe secret that
 `belt generate pay` creates:
 
 ```bash
+belt-pay secrets:setup dev
+```
+
+It prompts without echo for the Stripe secret key and webhook signing secret, then
+writes them directly through the AWS SDK. Leave either prompt blank to preserve its
+existing value, so you can run setup once for the API key and again after Stripe gives
+you the webhook signing secret.
+
+Rails-like inspection and arbitrary JSON editing remain available for advanced use:
+
+```bash
 belt-pay secrets:show dev
-belt-pay secrets:edit dev
+EDITOR="code --wait" belt-pay secrets:edit dev
 ```
 
 `secrets:show` prints the complete decrypted JSON to stdout. `secrets:edit` opens it
 with `$VISUAL` or `$EDITOR`, validates that the result is a JSON object, and writes a
 new Secrets Manager version only when the content changed. Its temporary file is mode
-`0600` and is removed when the editor closes.
+`0600` and is removed when the editor closes. All write paths refuse to overwrite a
+secret that changed while the command was open.
 
 The CLI detects the application name from Terraform, the AWS profile from
 `infrastructure/<env>/belt.rb`, and the region from Terraform or AWS environment
 variables. Custom setups can override those values:
 
 ```bash
-belt-pay secrets:show prod --profile my-prod-profile --region us-west-2
+belt-pay secrets:setup prod --profile my-prod-profile --region us-west-2
 belt-pay secrets:edit prod --secret-name custom-stripe-secret
 ```
 

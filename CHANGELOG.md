@@ -2,6 +2,9 @@
 
 ## 0.0.3 — 2026-10-02
 
+- Add `belt-pay secrets:setup ENV`, the happy-path command that prompts without echo
+  for Stripe's API and webhook signing secrets, preserves either existing value when
+  left blank, and writes directly through the AWS SDK.
 - Add `belt-pay secrets:show ENV` and `belt-pay secrets:edit ENV` for inspecting and
   securely editing each environment's Stripe JSON secret in AWS Secrets Manager.
 - Detect the Belt app name, AWS profile, and region from the selected environment,

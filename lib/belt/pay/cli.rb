@@ -1,5 +1,6 @@
 # frozen_string_literal: true
 
+require 'io/console'
 require 'json'
 require 'optparse'
 require 'shellwords'
@@ -11,10 +12,10 @@ module Belt
     class CLI
       class Error < StandardError; end
 
-      COMMANDS = %w[secrets:show secrets:edit].freeze
+      COMMANDS = %w[secrets:setup secrets:show secrets:edit].freeze
 
-      def self.start(args, out: $stdout, err: $stderr)
-        new(args, out: out, err: err).run
+      def self.start(args, input: $stdin, out: $stdout, err: $stderr)
+        new(args, input: input, out: out, err: err).run
         0
       rescue Error, OptionParser::ParseError => e
         err.puts "Error: #{e.message}"
@@ -25,8 +26,9 @@ module Belt
         1
       end
 
-      def initialize(args, out:, err:)
+      def initialize(args, input:, out:, err:)
         @args = args.dup
+        @input = input
         @out = out
         @err = err
         @options = {}
@@ -44,7 +46,11 @@ module Belt
         parse_options!
         resolve_context!
 
-        command == 'secrets:show' ? show : edit
+        case command
+        when 'secrets:setup' then setup
+        when 'secrets:show' then show
+        when 'secrets:edit' then edit
+        end
       end
 
       private
@@ -58,7 +64,7 @@ module Belt
 
       def parser
         OptionParser.new do |opts|
-          opts.banner = 'Usage: belt-pay secrets:show|secrets:edit ENV [options]'
+          opts.banner = 'Usage: belt-pay secrets:setup|secrets:show|secrets:edit ENV [options]'
 
           opts.on('--app-name NAME', 'Override the detected Belt application name') do |value|
             @options[:app_name] = value
@@ -95,6 +101,19 @@ module Belt
         @client = Aws::SecretsManager::Client.new(region: @region)
       end
 
+      def setup
+        response = fetch_secret
+        original = parse_secret(response.secret_string)
+        updated = original.dup
+
+        secret_key = hidden_prompt('Stripe secret key [blank keeps existing]')
+        webhook_secret = hidden_prompt('Stripe webhook signing secret [blank keeps existing]')
+        updated['stripe_secret_key'] = secret_key unless blank?(secret_key)
+        updated['stripe_webhook_secret'] = webhook_secret unless blank?(webhook_secret)
+
+        update_secret(response, original, updated)
+      end
+
       def show
         response = fetch_secret
         @out.puts JSON.pretty_generate(parse_secret(response.secret_string))
@@ -105,7 +124,11 @@ module Belt
         original = parse_secret(response.secret_string)
         edited = edit_json(original)
 
-        if edited == original
+        update_secret(response, original, edited)
+      end
+
+      def update_secret(response, original, updated)
+        if updated == original
           @out.puts "Secret unchanged: #{@secret_name}"
           return
         end
@@ -117,7 +140,7 @@ module Belt
 
         @client.put_secret_value(
           secret_id: @secret_name,
-          secret_string: JSON.generate(edited)
+          secret_string: JSON.generate(updated)
         )
         @out.puts "Updated secret: #{@secret_name}"
       end
@@ -136,6 +159,20 @@ module Belt
         parsed
       rescue JSON::ParserError => e
         raise Error, "#{@secret_name} does not contain valid JSON: #{e.message}"
+      end
+
+      def hidden_prompt(label)
+        @out.print "#{label}: "
+        @out.flush
+        value = if @input.respond_to?(:tty?) && @input.tty? && @input.respond_to?(:noecho)
+                  @input.noecho { @input.gets }
+                else
+                  @input.gets
+                end
+        @out.puts
+        raise Error, 'input ended before both Stripe secrets were read' if value.nil?
+
+        value.chomp
       end
 
       def edit_json(secret)
@@ -221,10 +258,12 @@ module Belt
           Manage a Belt application's Stripe secret in AWS Secrets Manager.
 
           Usage:
+            belt-pay secrets:setup ENV [options]
             belt-pay secrets:show ENV [options]
             belt-pay secrets:edit ENV [options]
 
           Commands:
+            secrets:setup        Prompt without echo for Stripe's secret values
             secrets:show         Print the decrypted JSON secret
             secrets:edit         Edit the secret with $VISUAL or $EDITOR
 
@@ -242,13 +281,15 @@ module Belt
             VISUAL, EDITOR       Editor command for secrets:edit
 
           Examples:
+            belt-pay secrets:setup dev
             belt-pay secrets:show dev
             belt-pay secrets:edit prod --profile my-prod-profile
-            BELT_ENV=staging EDITOR="code --wait" belt-pay secrets:edit
+            BELT_ENV=staging belt-pay secrets:setup
 
           Security:
-            secrets:show writes the complete secret to stdout. secrets:edit uses a
-            mode-0600 temporary file, validates JSON, and removes the file afterward.
+            secrets:setup reads values without echo and sends them directly through the
+            AWS SDK. secrets:show writes the complete secret to stdout. secrets:edit uses
+            a mode-0600 temporary file, validates JSON, and removes the file afterward.
         HELP
       end
     end
