@@ -108,18 +108,29 @@ terraform apply
 
 ### Add Stripe Keys to Secrets Manager
 
-After deployment, add your Stripe credentials to the secret created by Terraform:
+After deployment, edit the secret created by Terraform:
 
 ```bash
-aws secretsmanager put-secret-value \
-  --secret-id myapp-dev-stripe \
-  --secret-string '{
-    "stripe_secret_key": "sk_test_...",
-    "stripe_webhook_secret": "whsec_..."
-  }'
+EDITOR="code --wait" belt-pay secrets:edit dev
 ```
 
-> **Note:** You'll get the webhook secret in Step 5.
+The editor opens JSON with this shape:
+
+```json
+{
+  "stripe_secret_key": "sk_test_...",
+  "stripe_webhook_secret": "whsec_..."
+}
+```
+
+The CLI detects the generated `<app>-<env>-stripe` name and the environment's AWS
+profile and region. It validates the JSON and uses a private temporary file, so secret
+values do not appear in shell history or command arguments. Run
+`belt-pay secrets:show dev` when you intentionally need to inspect the stored value.
+Pass `--profile`, `--region`, or `--secret-name` to override detection.
+
+> **Note:** Stripe provides the `stripe_webhook_secret` when you create the endpoint
+> in Step 5. Run `belt-pay secrets:edit dev` again to add it then.
 
 ## Step 5: Configure Stripe Webhooks
 

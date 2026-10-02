@@ -315,7 +315,9 @@ module Belt
                  # ...
                end
 
-            3. Create your Stripe API keys in Secrets Manager:
+            3. Add your Stripe API keys to Secrets Manager:
+               belt-pay secrets:edit <env>
+
                Secret name: <app_name>-<env>-stripe
                Keys: stripe_secret_key, stripe_webhook_secret
 

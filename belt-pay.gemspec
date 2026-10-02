@@ -21,9 +21,12 @@ Gem::Specification.new do |spec|
   spec.metadata['changelog_uri'] = "#{spec.homepage}/blob/main/CHANGELOG.md"
   spec.metadata['rubygems_mfa_required'] = 'true'
 
-  spec.files = Dir['lib/**/*', 'lambda/**/*', 'LICENSE', 'README.md', 'CHANGELOG.md']
+  spec.files = Dir['lib/**/*', 'lambda/**/*', 'exe/*', 'LICENSE', 'README.md', 'CHANGELOG.md']
+  spec.bindir = 'exe'
+  spec.executables = ['belt-pay']
   spec.require_paths = ['lib']
 
+  spec.add_dependency 'aws-sdk-secretsmanager', '= 1.136.0'
   spec.add_dependency 'belt', '>= 0.2'
   spec.add_dependency 'stripe', '~> 13.0'
 end

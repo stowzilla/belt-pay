@@ -167,6 +167,33 @@ The Stripe secret should contain:
 }
 ```
 
+### Inspecting and Editing Secrets
+
+Belt Pay includes Rails-like commands for the environment-specific Stripe secret that
+`belt generate pay` creates:
+
+```bash
+belt-pay secrets:show dev
+belt-pay secrets:edit dev
+```
+
+`secrets:show` prints the complete decrypted JSON to stdout. `secrets:edit` opens it
+with `$VISUAL` or `$EDITOR`, validates that the result is a JSON object, and writes a
+new Secrets Manager version only when the content changed. Its temporary file is mode
+`0600` and is removed when the editor closes.
+
+The CLI detects the application name from Terraform, the AWS profile from
+`infrastructure/<env>/belt.rb`, and the region from Terraform or AWS environment
+variables. Custom setups can override those values:
+
+```bash
+belt-pay secrets:show prod --profile my-prod-profile --region us-west-2
+belt-pay secrets:edit prod --secret-name custom-stripe-secret
+```
+
+Set `BELT_ENV` to omit the environment argument. Because `secrets:show` intentionally
+reveals credentials, avoid redirecting its output to logs or sharing it in chat.
+
 ## Common Patterns
 
 ### Annual Subscription (Feature Gating)

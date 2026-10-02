@@ -1,5 +1,14 @@
 # Changelog
 
+## 0.0.3 — 2026-10-02
+
+- Add `belt-pay secrets:show ENV` and `belt-pay secrets:edit ENV` for inspecting and
+  securely editing each environment's Stripe JSON secret in AWS Secrets Manager.
+- Detect the Belt app name, AWS profile, and region from the selected environment,
+  with explicit overrides for custom setups.
+- Package the `belt-pay` executable and pin the AWS Secrets Manager SDK used by
+  the CLI.
+
 ## 0.0.2 — 2026-09-05
 
 - **Plan DSL (convention over configuration).** Declare subscription plans, their
