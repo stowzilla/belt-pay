@@ -169,11 +169,11 @@ The Stripe secret should contain:
 
 ### Setting Up and Managing Secrets
 
-Belt Pay includes a guided command for the environment-specific Stripe secret that
-`belt generate pay` creates:
+Belt Pay hooks into Belt through its standard gem-provided Rake task mechanism. The
+guided happy path uses `BELT_ENV` to select the environment:
 
 ```bash
-belt-pay secrets:setup dev
+BELT_ENV=dev belt pay:setup
 ```
 
 It prompts without echo for the Stripe secret key and webhook signing secret, then
@@ -181,30 +181,39 @@ writes them directly through the AWS SDK. Leave either prompt blank to preserve 
 existing value, so you can run setup once for the API key and again after Stripe gives
 you the webhook signing secret.
 
+You can also pass the environment with standard Rake task-argument syntax:
+
+```bash
+belt 'pay:setup[dev]'
+```
+
 Rails-like inspection and arbitrary JSON editing remain available for advanced use:
 
 ```bash
-belt-pay secrets:show dev
-EDITOR="code --wait" belt-pay secrets:edit dev
+BELT_ENV=dev belt pay:show
+EDITOR="code --wait" BELT_ENV=dev belt pay:edit
+# Or: belt 'pay:show[dev]' / belt 'pay:edit[dev]'
 ```
 
-`secrets:show` prints the complete decrypted JSON to stdout. `secrets:edit` opens it
-with `$VISUAL` or `$EDITOR`, validates that the result is a JSON object, and writes a
-new Secrets Manager version only when the content changed. Its temporary file is mode
+`pay:show` prints the complete decrypted JSON to stdout. `pay:edit` opens it with
+`$VISUAL` or `$EDITOR`, validates that the result is a JSON object, and writes a new
+Secrets Manager version only when the content changed. Its temporary file is mode
 `0600` and is removed when the editor closes. All write paths refuse to overwrite a
 secret that changed while the command was open.
 
-The CLI detects the application name from Terraform, the AWS profile from
+The tasks detect the application name from Terraform, the AWS profile from
 `infrastructure/<env>/belt.rb`, and the region from Terraform or AWS environment
-variables. Custom setups can override those values:
+variables. Custom setups can override those values with `APP_NAME`,
+`BELT_PAY_SECRET_NAME`, `AWS_PROFILE`, and `AWS_REGION`:
 
 ```bash
-belt-pay secrets:setup prod --profile my-prod-profile --region us-west-2
-belt-pay secrets:edit prod --secret-name custom-stripe-secret
+APP_NAME=my_app BELT_ENV=prod AWS_PROFILE=my-prod-profile belt pay:setup
+BELT_PAY_SECRET_NAME=custom-stripe-secret BELT_ENV=prod belt pay:edit
 ```
 
-Set `BELT_ENV` to omit the environment argument. Because `secrets:show` intentionally
-reveals credentials, avoid redirecting its output to logs or sharing it in chat.
+Because `pay:show` intentionally reveals credentials, avoid redirecting its output to
+logs or sharing it in chat. The packaged `belt-pay secrets:*` executable remains as a
+backward-compatible alias, but the Belt-native tasks are the preferred interface.
 
 ## Common Patterns
 

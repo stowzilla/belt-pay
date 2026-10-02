@@ -2,15 +2,19 @@
 
 ## 0.0.3 — 2026-10-02
 
-- Add `belt-pay secrets:setup ENV`, the happy-path command that prompts without echo
-  for Stripe's API and webhook signing secrets, preserves either existing value when
-  left blank, and writes directly through the AWS SDK.
-- Add `belt-pay secrets:show ENV` and `belt-pay secrets:edit ENV` for inspecting and
-  securely editing each environment's Stripe JSON secret in AWS Secrets Manager.
+- Add Belt-native `pay:setup`, `pay:show`, and `pay:edit` tasks through Belt's
+  gem Rake-task extension mechanism. Select an environment with `BELT_ENV` or standard
+  task-argument syntax such as `belt 'pay:setup[dev]'`.
+- Make `belt pay:setup` the happy path: it prompts without echo for Stripe's API and
+  webhook signing secrets, preserves either existing value when left blank, and writes
+  directly through the AWS SDK.
+- Add `belt pay:show` and `belt pay:edit` for inspecting and securely editing each
+  environment's Stripe JSON secret in AWS Secrets Manager.
 - Detect the Belt app name, AWS profile, and region from the selected environment,
-  with explicit overrides for custom setups.
-- Package the `belt-pay` executable and pin the AWS Secrets Manager SDK used by
-  the CLI.
+  with environment-variable and explicit overrides for custom setups.
+- Retain the packaged `belt-pay secrets:*` executable as a backward-compatible alias,
+  pin the AWS Secrets Manager SDK, and include the pinned Rake runtime required for
+  task dispatch in fresh Belt apps.
 
 ## 0.0.2 — 2026-09-05
 

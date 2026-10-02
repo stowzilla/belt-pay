@@ -19,7 +19,7 @@ module Belt
         0
       rescue Error, OptionParser::ParseError => e
         err.puts "Error: #{e.message}"
-        err.puts "Run `belt-pay --help` for usage."
+        err.puts "Run `belt tasks --grep pay` for available Belt Pay commands."
         1
       rescue Aws::Errors::ServiceError => e
         err.puts "AWS error: #{e.message}"
@@ -90,10 +90,11 @@ module Belt
         env_dir = File.join(@root, 'infrastructure', @environment)
         raise Error, "environment not found: #{env_dir}" unless Dir.exist?(env_dir)
 
-        @app_name = @options[:app_name] || detect_app_name(env_dir)
-        raise Error, 'could not determine the application name; pass --app-name' if blank?(@app_name)
+        @app_name = @options[:app_name] || ENV['APP_NAME'] || detect_app_name(env_dir)
+        raise Error, 'could not determine the application name; pass --app-name or set APP_NAME' if blank?(@app_name)
 
-        @secret_name = @options[:secret_name] || "#{@app_name}-#{@environment}-stripe"
+        @secret_name = @options[:secret_name] || ENV['BELT_PAY_SECRET_NAME'] ||
+                       "#{@app_name}-#{@environment}-stripe"
         @profile = @options[:profile] || ENV['AWS_PROFILE'] || detect_profile(env_dir)
         @region = @options[:region] || ENV['AWS_REGION'] || ENV['AWS_DEFAULT_REGION'] || detect_region(env_dir)
 

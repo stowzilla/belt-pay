@@ -28,5 +28,6 @@ Gem::Specification.new do |spec|
 
   spec.add_dependency 'aws-sdk-secretsmanager', '= 1.136.0'
   spec.add_dependency 'belt', '>= 0.2'
+  spec.add_dependency 'rake', '= 13.4.2'
   spec.add_dependency 'stripe', '~> 13.0'
 end
