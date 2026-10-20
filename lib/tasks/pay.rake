@@ -11,7 +11,7 @@ run_pay_secret_command = lambda do |command, environment|
 end
 
 namespace :pay do
-  desc 'Prompt without echo for Stripe secrets (BELT_ENV or pay:setup[env])'
+  desc 'Store the Stripe key and create the webhook endpoint (BELT_ENV or pay:setup[env])'
   task :setup, [:environment] do |_task, args|
     run_pay_secret_command.call(:setup, args[:environment])
   end
