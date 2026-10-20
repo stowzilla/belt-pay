@@ -1,5 +1,20 @@
 # Changelog
 
+## 0.0.4 — 2026-10-20
+
+- **`belt pay:setup` creates the Stripe webhook endpoint for you.** After the secret-key
+  prompt it reads `api_url` from `terraform output`, offers to create
+  `<api_url>/pay/webhooks` in Stripe (subscribed to every event Belt Pay handles), and
+  stores the returned `whsec_` signing secret directly. No Dashboard clicking.
+  - Shows whether the key is test or live mode before creating anything.
+  - If Stripe already has an endpoint for that URL, offers to replace it (the old one
+    is deleted only after the new secret is saved) or links to it in the Dashboard.
+  - Declining, or missing terraform output, prints step-by-step Dashboard instructions
+    with the exact URL and events, then prompts for the secret as before.
+  - `--webhook-url` / `BELT_PAY_WEBHOOK_URL` and `--webhook-events` /
+    `BELT_PAY_WEBHOOK_EVENTS` override the defaults.
+- `Belt::Pay::WebhookHandler::EVENTS` lists the Stripe events the handler acts on.
+
 ## 0.0.3 — 2026-10-02
 
 - Add Belt-native `pay:setup`, `pay:show`, and `pay:edit` tasks through Belt's

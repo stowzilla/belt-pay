@@ -176,10 +176,17 @@ guided happy path uses `BELT_ENV` to select the environment:
 BELT_ENV=dev belt pay:setup
 ```
 
-It prompts without echo for the Stripe secret key and webhook signing secret, then
-writes them directly through the AWS SDK. Leave either prompt blank to preserve its
-existing value, so you can run setup once for the API key and again after Stripe gives
-you the webhook signing secret.
+It prompts without echo for the Stripe secret key, then offers to create the webhook
+endpoint in Stripe for you: it reads `api_url` from `terraform output`, creates
+`<api_url>/pay/webhooks` subscribed to every [handled event](#webhook-events), and stores
+the `whsec_` signing secret Stripe returns. Everything goes directly through the Stripe
+API and AWS SDK. Run it after `belt apply` so the URL is known.
+
+Decline (or run it before the first apply) and it prints step-by-step Dashboard
+instructions with the exact URL and events, then prompts for the signing secret. Leave
+either prompt blank to preserve its existing value. Use `--webhook-url` /
+`BELT_PAY_WEBHOOK_URL` or `--webhook-events` / `BELT_PAY_WEBHOOK_EVENTS` to override the
+defaults. Test (`sk_test_`) and live (`sk_live_`) keys get separate endpoints and secrets.
 
 You can also pass the environment with standard Rake task-argument syntax:
 
@@ -354,7 +361,8 @@ module "pay" {
 
 ## Stripe Dashboard Setup
 
-After deploying, configure your Stripe webhook endpoint:
+`BELT_ENV=<env> belt pay:setup` creates the webhook endpoint and stores its signing
+secret for you. To do it by hand instead:
 
 1. Go to Stripe Dashboard → Developers → Webhooks
 2. Add endpoint: `https://<your-api-domain>/pay/webhooks`

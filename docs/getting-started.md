@@ -135,11 +135,14 @@ For advanced use, `BELT_ENV=dev belt pay:edit` opens the complete JSON in
 stored value. Standard Rake arguments also work when you do not want to set `BELT_ENV`:
 `belt 'pay:setup[dev]'`.
 
-> **Note:** Stripe provides the `stripe_webhook_secret` when you create the endpoint
-> in Step 5. Leave that prompt blank initially, then run
-> `BELT_ENV=dev belt pay:setup` again after Stripe gives you the signing secret.
+> **Note:** After the secret key, setup offers to create the Stripe webhook endpoint
+> (`<terraform api_url>/pay/webhooks`) and stores the signing secret Stripe returns.
+> Say yes and Step 5 is already done. Run setup after `belt apply` so the URL exists.
 
 ## Step 5: Configure Stripe Webhooks
+
+Skip this if `belt pay:setup` created the endpoint for you. To do it by hand (setup
+prints these steps with your exact URL when you decline):
 
 1. Go to [Stripe Dashboard → Developers → Webhooks](https://dashboard.stripe.com/webhooks)
 2. Click **Add endpoint**

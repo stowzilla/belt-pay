@@ -5,6 +5,17 @@ module Belt
     # Handles incoming webhooks from the payment provider.
     # Verifies signatures, dispatches events, and records transactions.
     module WebhookHandler
+      # Stripe events #dispatch acts on. `belt pay:setup` subscribes new webhook
+      # endpoints to exactly this list.
+      EVENTS = %w[
+        checkout.session.completed
+        checkout.session.expired
+        invoice.paid
+        invoice.payment_failed
+        customer.subscription.deleted
+        customer.subscription.updated
+      ].freeze
+
       class << self
         # Process a raw webhook request.
         # @param payload [String] Raw request body

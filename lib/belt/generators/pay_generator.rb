@@ -315,20 +315,15 @@ module Belt
                  # ...
                end
 
-            3. Add your Stripe API keys to Secrets Manager:
-               BELT_ENV=<env> belt pay:setup
-
-               Values are prompted without echo. Leave the webhook secret blank
-               until Stripe gives it to you, then run setup again.
-
-            4. Deploy:
+            3. Deploy:
                belt apply <env>
 
-            5. Configure Stripe webhook endpoint:
-               URL: https://<your-api-domain>/pay/webhooks
-               Events: checkout.session.completed, checkout.session.expired,
-                       invoice.paid, invoice.payment_failed,
-                       customer.subscription.deleted, customer.subscription.updated
+            4. Store your Stripe key and create the webhook endpoint:
+               BELT_ENV=<env> belt pay:setup
+
+               Prompts without echo for the Stripe secret key, then creates
+               <api_url>/pay/webhooks in Stripe and stores its signing secret.
+               Decline to get step-by-step Dashboard instructions instead.
 
           Quick Usage:
             # Create a checkout session
