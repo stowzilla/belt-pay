@@ -205,6 +205,25 @@ class SubscriptionsController < BeltController::Base
 end
 ```
 
+`create_checkout` accepts any Stripe Checkout Session option alongside the required
+ones. The common extras:
+
+```ruby
+Belt::Pay.create_checkout(current_customer,
+  line_items: [{ price: ENV['STRIPE_PRICE_ID'], quantity: 1 }],
+  success_url: "#{ENV['FRONTEND_URL']}/success?session_id={CHECKOUT_SESSION_ID}",
+  cancel_url: "#{ENV['FRONTEND_URL']}/pricing",
+  allow_promotion_codes: true,                  # let buyers enter Dashboard coupon codes
+  automatic_tax: { enabled: true },             # Stripe Tax
+  payment_intent_data: { metadata: { order_id: order.id } }, # survives onto the charge,
+                                                # so a Dashboard refund can be matched back
+  subscription_data: { trial_period_days: 14 }) # subscription mode only
+```
+
+Unknown keys raise `ArgumentError` rather than being dropped. The full list lives in
+`Belt::Pay::Providers::Stripe::CHECKOUT_SESSION_OPTIONS`; for a Stripe param not on it
+yet, pass `extra: { ... }` and it is merged in as-is.
+
 ### Routes
 
 ```ruby

@@ -94,7 +94,11 @@ module Belt
 
       # Create a checkout session for one-time or subscription payments.
       # @param customer [Object] Your app's user/customer model instance
-      # @param options [Hash] Checkout options (line_items, mode, success_url, cancel_url, metadata)
+      # @param options [Hash] Checkout options: line_items, mode, success_url, cancel_url,
+      #   metadata, plus any Stripe Checkout Session option such as allow_promotion_codes,
+      #   automatic_tax, payment_intent_data or subscription_data (see
+      #   Providers::Stripe::CHECKOUT_SESSION_OPTIONS). Unknown keys raise ArgumentError;
+      #   pass extra: { ... } to forward a param the list doesn't know yet.
       # @return [Hash] { url:, session_id: }
       def create_checkout(customer, **options)
         Checkout.create(customer, **options)

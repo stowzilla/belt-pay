@@ -12,6 +12,9 @@ module Belt
         # @param success_url [String]
         # @param cancel_url [String]
         # @param metadata [Hash]
+        # @param options [Hash] Any other Checkout Session option the provider supports
+        #   (e.g. allow_promotion_codes:, automatic_tax:, payment_intent_data:,
+        #   subscription_data:). Forwarded verbatim; unknown keys raise ArgumentError.
         # @return [Hash] { url:, session_id: }
         def create(customer, line_items:, mode: 'payment', success_url:, cancel_url:, metadata: {}, **options)
           # Ensure provider customer exists
