@@ -67,24 +67,54 @@ module Belt
           { client_secret: setup_intent.client_secret, setup_intent_id: setup_intent.id }
         end
 
+        # Stripe Checkout Session options that #create_checkout_session forwards verbatim
+        # when given. Anything else raises ArgumentError so a missing option fails loudly
+        # instead of being silently dropped; pass `extra:` to send a key not listed here.
+        # @see https://docs.stripe.com/api/checkout/sessions/create
+        CHECKOUT_SESSION_OPTIONS = %i[
+          subscription_data payment_intent_data setup_intent_data
+          allow_promotion_codes discounts automatic_tax tax_id_collection
+          customer_update customer_creation client_reference_id currency locale expires_at
+          payment_method_types payment_method_collection payment_method_options
+          payment_method_configuration saved_payment_method_options
+          billing_address_collection shipping_address_collection shipping_options
+          phone_number_collection consent_collection custom_fields custom_text submit_type
+          invoice_creation after_expiration adaptive_pricing optional_items
+          ui_mode return_url redirect_on_completion
+        ].freeze
+
         # Create a Checkout Session.
+        #
+        # Every key in CHECKOUT_SESSION_OPTIONS (e.g. `allow_promotion_codes:`,
+        # `automatic_tax:`, `payment_intent_data:`, `subscription_data:`) is forwarded to
+        # Stripe as-is. Keys with a nil value are omitted. Unknown keys raise
+        # ArgumentError; use `extra:` for a Stripe option this list doesn't know about yet.
+        #
         # @param pay_customer_id [String] Stripe customer ID
-        # @param options [Hash] line_items, mode, success_url, cancel_url, metadata
+        # @param line_items [Array<Hash>]
+        # @param mode [String] 'payment', 'subscription' or 'setup' (default 'payment')
+        # @param success_url [String, nil]
+        # @param cancel_url [String, nil]
+        # @param metadata [Hash]
+        # @param extra [Hash] Additional Checkout Session params merged in last, unvalidated
+        # @param options [Hash] Any key in CHECKOUT_SESSION_OPTIONS
         # @return [Hash] { url:, session_id: }
-        def create_checkout_session(pay_customer_id, **options)
+        # @raise [ArgumentError] when an option is not a known Checkout Session param
+        def create_checkout_session(pay_customer_id, line_items:, mode: 'payment', success_url: nil,
+                                    cancel_url: nil, metadata: {}, extra: {}, **options)
           ensure_api_key!
           params = {
             customer: pay_customer_id,
-            line_items: options[:line_items],
-            mode: options[:mode] || 'payment',
-            success_url: options[:success_url],
-            cancel_url: options[:cancel_url],
-            metadata: options[:metadata] || {}
+            line_items: line_items,
+            mode: mode || 'payment',
+            success_url: success_url,
+            cancel_url: cancel_url,
+            metadata: metadata || {}
           }
-          # For subscription mode, allow trial periods
-          params[:subscription_data] = options[:subscription_data] if options[:subscription_data]
+          params.merge!(checkout_session_options(options))
+          params.merge!(extra) if extra
 
-          session = ::Stripe::Checkout::Session.create(params)
+          session = ::Stripe::Checkout::Session.create(params.compact)
           { url: session.url, session_id: session.id }
         end
 
@@ -177,6 +207,19 @@ module Belt
         end
 
         private
+
+        # Validate and compact the pass-through Checkout Session options.
+        def checkout_session_options(options)
+          unknown = options.keys - CHECKOUT_SESSION_OPTIONS
+          if unknown.any?
+            raise ArgumentError,
+                  "Unknown Checkout Session option(s): #{unknown.map(&:inspect).join(', ')}. " \
+                  "Supported: #{CHECKOUT_SESSION_OPTIONS.join(', ')}. " \
+                  'Pass `extra: { ... }` to forward a param not listed here.'
+          end
+
+          options.compact
+        end
 
         def fetch_api_key
           secret_name = Belt::Pay.configuration.secret_name

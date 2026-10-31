@@ -1,5 +1,21 @@
 # Changelog
 
+## 0.0.5 — 2026-10-31
+
+- **`create_checkout` no longer drops Checkout Session options.** The Stripe provider used
+  to copy only `line_items`, `mode`, `success_url`, `cancel_url`, `metadata` and
+  `subscription_data` into `Stripe::Checkout::Session.create` and silently discard
+  everything else. It now forwards every option in
+  `Belt::Pay::Providers::Stripe::CHECKOUT_SESSION_OPTIONS` — including
+  `allow_promotion_codes`, `discounts`, `automatic_tax`, `payment_intent_data`,
+  `setup_intent_data`, `tax_id_collection`, `customer_update`, `locale`, `expires_at`,
+  `ui_mode`/`return_url` and the rest of the documented Checkout Session params.
+  - Unknown keys raise `ArgumentError` naming the offending option, so the next missing
+    param fails loudly instead of vanishing.
+  - `extra: { ... }` merges any additional params in unvalidated, for Stripe options the
+    list doesn't know about yet.
+  - Options given as `nil` are omitted from the request.
+
 ## 0.0.4 — 2026-10-20
 
 - **`belt pay:setup` creates the Stripe webhook endpoint for you.** After the secret-key

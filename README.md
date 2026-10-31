@@ -100,6 +100,18 @@ Belt::Pay.create_checkout(customer,
   success_url: 'https://app.example.com/success?session_id={CHECKOUT_SESSION_ID}',
   cancel_url: 'https://app.example.com/cancel')
 
+# Any Stripe Checkout Session option passes straight through
+Belt::Pay.create_checkout(customer,
+  line_items: [{ price: 'price_xxx', quantity: 1 }],
+  success_url: 'https://app.example.com/success?session_id={CHECKOUT_SESSION_ID}',
+  cancel_url: 'https://app.example.com/cancel',
+  allow_promotion_codes: true,                        # Dashboard coupons / promo codes
+  automatic_tax: { enabled: true },                   # Stripe Tax
+  payment_intent_data: { metadata: { pass_id: 42 } }) # carried onto the charge, so a
+                                                      # Dashboard refund still knows the app record
+# Unknown keys raise ArgumentError instead of being silently dropped.
+# Use `extra: { ... }` to forward a Stripe param this gem doesn't list yet.
+
 # Subscribe directly (when payment method is already attached)
 customer.subscribe!(price_id: 'price_xxx')
 
