@@ -14,6 +14,7 @@ module Belt
   module Pay
     class CLI
       class Error < StandardError; end
+      class EndpointKeyUnavailable < StandardError; end
 
       COMMANDS = %w[secrets:setup secrets:show secrets:edit].freeze
       WEBHOOK_PATH = '/pay/webhooks'
@@ -127,7 +128,7 @@ module Belt
         updated['stripe_webhook_secret'] = webhook_secret unless blank?(webhook_secret)
 
         update_secret(response, original, updated)
-        delete_replaced_endpoints(updated['stripe_secret_key'], replaced)
+        delete_replaced_endpoints(replaced)
       end
 
       # Returns [signing_secret, endpoints_to_delete]. Offers to create the Stripe
@@ -147,7 +148,8 @@ module Belt
         create = !url.nil? && confirm("Create the #{mode}-mode webhook endpoint in Stripe now?", default: blank?(existing_secret))
         return [manual_webhook_secret(url, mode: mode), []] unless create
 
-        existing = stripe_endpoints(api_key).select { |endpoint| endpoint.url == url }
+        @endpoint_key = api_key
+        existing = with_endpoint_key(mode) { |key| stripe_endpoints(key) }.select { |endpoint| endpoint.url == url }
         if existing.any?
           ids = existing.map(&:id).join(', ')
           @out.puts "Stripe already has an endpoint for this URL (#{ids}). Stripe never re-sends a signing secret,"
@@ -158,12 +160,17 @@ module Belt
           end
         end
 
-        endpoint = ::Stripe::WebhookEndpoint.create(
-          { url: url, enabled_events: webhook_events, description: "Belt Pay (#{@app_name} #{@environment})" },
-          { api_key: api_key }
-        )
+        endpoint = with_endpoint_key(mode) do |key|
+          ::Stripe::WebhookEndpoint.create(
+            { url: url, enabled_events: webhook_events, description: "Belt Pay (#{@app_name} #{@environment})" },
+            { api_key: key }
+          )
+        end
         @out.puts "Created #{mode}-mode webhook endpoint #{endpoint.id} for #{webhook_events.size} events."
         [endpoint.secret, existing.map(&:id)]
+      rescue EndpointKeyUnavailable => e
+        @out.puts e.message
+        [manual_webhook_secret(url, mode: mode), []]
       end
 
       def manual_webhook_secret(url, mode: nil)
@@ -183,11 +190,36 @@ module Belt
         hidden_prompt('Stripe webhook signing secret [blank keeps existing]')
       end
 
-      def delete_replaced_endpoints(api_key, ids)
+      def delete_replaced_endpoints(ids)
         ids.each do |id|
-          ::Stripe::WebhookEndpoint.delete(id, {}, { api_key: api_key })
+          ::Stripe::WebhookEndpoint.delete(id, {}, { api_key: @endpoint_key })
           @out.puts "Deleted replaced webhook endpoint #{id}"
         end
+      end
+
+      # The stored key is what the app runs with, so it is usually a restricted key
+      # (rk_) without Webhook Endpoints access. When Stripe refuses it, ask once for a
+      # key that can manage endpoints (an sk_ secret key, or a restricted key with
+      # Webhook Endpoints: Write), use it for the endpoint calls in this run only, and
+      # never store it.
+      def with_endpoint_key(mode)
+        yield @endpoint_key
+      rescue ::Stripe::PermissionError => e
+        raise EndpointKeyUnavailable, "Stripe refused that key too: #{e.message}" if @endpoint_key_borrowed
+
+        @out.puts 'The stored Stripe key cannot manage webhook endpoints (a restricted key usually cannot).'
+        @out.puts 'Setup can use a second key for this step only; it is not stored.'
+        key = hidden_prompt("Stripe #{mode} secret key, or restricted key with Webhook Endpoints write [not stored]")
+        raise EndpointKeyUnavailable, 'No key given.' if blank?(key)
+
+        key = key.strip
+        unless stripe_mode(key) == mode
+          raise EndpointKeyUnavailable, "That is a #{stripe_mode(key)}-mode key; the stored key is #{mode} mode."
+        end
+
+        @endpoint_key = key
+        @endpoint_key_borrowed = true
+        retry
       end
 
       def stripe_endpoints(api_key)
@@ -419,7 +451,8 @@ module Belt
 
           Security:
             secrets:setup reads values without echo and sends them directly through the
-            AWS SDK. secrets:show writes the complete secret to stdout. secrets:edit uses
+            AWS SDK. If the stored key is a restricted key without Webhook Endpoints
+            access, it asks for a second key for the endpoint step and never stores it. secrets:show writes the complete secret to stdout. secrets:edit uses
             a mode-0600 temporary file, validates JSON, and removes the file afterward.
         HELP
       end
