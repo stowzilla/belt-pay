@@ -138,6 +138,10 @@ stored value. Standard Rake arguments also work when you do not want to set `BEL
 > **Note:** After the secret key, setup offers to create the Stripe webhook endpoint
 > (`<terraform api_url>/pay/webhooks`) and stores the signing secret Stripe returns.
 > Say yes and Step 5 is already done. Run setup after `belt apply` so the URL exists.
+>
+> If the stored key is a restricted key (`rk_`) without Webhook Endpoints access, setup
+> asks once for a key that can manage endpoints, uses it for this step only, and does
+> not store it.
 
 ## Step 5: Configure Stripe Webhooks
 

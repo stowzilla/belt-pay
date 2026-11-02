@@ -200,6 +200,13 @@ either prompt blank to preserve its existing value. Use `--webhook-url` /
 `BELT_PAY_WEBHOOK_URL` or `--webhook-events` / `BELT_PAY_WEBHOOK_EVENTS` to override the
 defaults. Test (`sk_test_`) and live (`sk_live_`) keys get separate endpoints and secrets.
 
+Prefer a [restricted key](https://docs.stripe.com/keys#limit-access) (`rk_`) as the
+stored key, scoped to what your app calls at runtime (typically Customers, Checkout
+Sessions, Customer portal and Subscriptions). It doesn't need Webhook Endpoints access:
+when Stripe refuses it for the endpoint step, setup asks once for a key that can manage
+endpoints (your `sk_` secret key, or a restricted key with Webhook Endpoints: Write),
+uses it for that step only, and doesn't store it.
+
 You can also pass the environment with standard Rake task-argument syntax:
 
 ```bash

@@ -1,5 +1,17 @@
 # Changelog
 
+## 0.0.6 — 2026-11-02
+
+- **`pay:setup` works with a restricted runtime key.** The stored key is what the app
+  runs with, so it should be a restricted key (`rk_`) holding only what checkout and the
+  portal need. Setup used to manage the webhook endpoint with that same key, so a
+  restricted key without Webhook Endpoints access failed with a Stripe permission error.
+  When Stripe refuses the stored key, setup now asks once for a key that can manage
+  endpoints (an `sk_` secret key, or a restricted key with Webhook Endpoints: Write),
+  uses it for the endpoint list/create/delete calls in that run only, and never stores
+  it. A key from the other Stripe mode is refused. Leaving the prompt blank, or a second
+  refusal, falls back to the Dashboard steps; the stored key is still saved either way.
+
 ## 0.0.5 — 2026-10-31
 
 - **`create_checkout` no longer drops Checkout Session options.** The Stripe provider used
