@@ -1,5 +1,127 @@
 # Changelog
 
+## 0.0.7 — 2026-11-15
+
+Security release for the Stripe webhook. **Read "Upgrading from 0.0.6 or earlier" below
+before deploying**: three of the steps are required.
+
+### Fixed
+
+- **The webhook no longer accepts events signed with the placeholder secret.** The
+  generated Terraform seeded the secret with `whsec_PLACEHOLDER` / `sk_test_PLACEHOLDER`,
+  and the webhook verified against whatever it found, so on a deploy whose secret was
+  never replaced anyone could sign a made-up event. `verify_webhook` now raises
+  `Belt::Pay::ConfigurationError` unless the signing secret is a real `whsec_` secret,
+  `ensure_api_key!` refuses a missing or placeholder API key, and the Terraform template
+  creates the secret empty. `belt pay:setup` warns while either value is unset.
+- **`checkout.session.completed` no longer means paid.** A transaction is completed only
+  when the session's `payment_status` is `paid` or `no_payment_required`. A session paid
+  by a delayed method (bank debit, voucher) stays `pending` until
+  `checkout.session.async_payment_succeeded` completes it or `_failed` fails it.
+- **Refunds and disputes reach the transaction.** `charge.refunded` records
+  `amount_refunded_cents` and marks a fully refunded transaction `refunded`;
+  `charge.dispute.created` marks it `disputed`; `charge.dispute.closed` returns it to
+  `completed` (won) or `refunded` (lost).
+- **A redelivered event changes nothing.** Rows the webhook creates are keyed on the
+  Checkout Session / invoice id with a conditional put, and only a `pending` transaction
+  can be completed, so Stripe's retries and Dashboard resends no longer add duplicate
+  rows or revive a refunded purchase.
+- **`Billable#subscribe!` no longer grants the plan before anything is paid.** `pay_plan`
+  is recorded only when the subscription is `active` or `trialing`. The webhook sets it
+  when Stripe reports the subscription active and clears it when the subscription is
+  `canceled`, `unpaid` or `incomplete_expired` (it asks Stripe for the subscription's
+  current status rather than trusting the event). This needs the new
+  `Belt::Pay.configuration.customer_class`. The subscription's own transaction is
+  `pending` until active.
+- **Events missing a field no longer crash the webhook.** Stripe objects raise on a
+  field the event doesn't carry (for example metadata without `app_customer_id`, or
+  `invoice.subscription` on API versions from 2025-03-31), which made such events fail
+  with a 500 on every retry. Fields are now read defensively.
+- **Secrets are read without an app patch.** `fetch_api_key` / `fetch_webhook_secret`
+  relied on a `SecretsHelper` Belt doesn't ship and returned nil without one. They now
+  read the configured secret from AWS Secrets Manager directly (a `::SecretsHelper`
+  defined by the app is still used when present).
+- The webhook controller decodes a base64-encoded body (`isBase64Encoded`).
+- `Checkout.create` no longer records every pending transaction as `usd`: the currency
+  comes from the request when it names one, and from the session when it is paid.
+
+### Added
+
+- **`Belt::Pay.on(*event_types) { |event, transaction| ... }`** runs your code when the
+  webhook receives an event, after the gem's bookkeeping. See "Acting on Events" in the
+  README.
+- `Belt::Pay::WebhookHandler::EVENTS` gains `checkout.session.async_payment_succeeded`,
+  `checkout.session.async_payment_failed`, `customer.subscription.created`,
+  `charge.refunded`, `charge.dispute.created` and `charge.dispute.closed`.
+- `belt pay:setup` offers to add missing events to an existing Stripe endpoint in place,
+  keeping its signing secret.
+- `Belt::Pay.configuration.customer_class`, transaction status `disputed`, and the
+  transaction fields `amount_refunded_cents` and `provider_payment_intent_id` (now filled
+  in). No table or index change is needed.
+
+### Upgrading from 0.0.6 or earlier
+
+Do these in order, for every environment (`dev`, `prod`, ...).
+
+1. **Bump the gem.** In the app's `Gemfile` (and `lambda/Gemfile` if it has one) allow
+   `belt-pay` 0.0.7 (`gem 'belt-pay', '~> 0.0.7'`), then `bundle update belt-pay`.
+
+2. **Required: make sure the stored secret is real.** Run `belt 'pay:show[<env>]'` (it
+   prints credentials; don't paste the output anywhere). If `stripe_secret_key` or
+   `stripe_webhook_secret` is empty or ends in `PLACEHOLDER`, run
+   `belt 'pay:setup[<env>]'`. After this release such an environment answers every
+   webhook with 500 and refuses Stripe calls until it is set, by design.
+
+3. **Required: subscribe the Stripe endpoint to the new events.** Run
+   `belt 'pay:setup[<env>]'`, leave the key prompt blank, answer `y` to
+   "Create the ... webhook endpoint in Stripe now?", `y` to "Add them to this endpoint?",
+   `n` to "Replace it?", and leave the signing secret blank. (Or in the Stripe Dashboard:
+   Developers -> Webhooks -> the endpoint -> add the six events listed under "Added".)
+   **Do not skip this**: once this version is deployed, a checkout paid by a delayed
+   method stays `pending` until `checkout.session.async_payment_succeeded` arrives, and
+   refunds and disputes are only seen if the endpoint sends them.
+
+4. **Required if the app uses `subscribe!(plan:)` or reads `pay_plan` / `plan` /
+   `plan_allows?` / `within_limit?`:** set the customer model where the app and the
+   webhook Lambda boot, and make sure that model is loaded in the webhook Lambda
+   (`lambda/pay_webhooks.rb`):
+
+   ```ruby
+   Belt::Pay.configure { |config| config.customer_class = 'Customer' } # your Billable model
+   ```
+
+   Without it `pay_plan` is never set for a subscription that starts unpaid (the webhook
+   logs `customer_class is not configured` on each subscription event). Code that relied
+   on `pay_plan` being set immediately after `subscribe!` must wait for the webhook, or
+   check `result[:status]`.
+
+5. **Check the runtime Stripe key's permissions** if it is a restricted key (`rk_`): the
+   webhook now reads Checkout Sessions (to find the purchase behind a refund or dispute)
+   and Subscriptions. Both need at least Read. A key without them makes those events
+   fail with 500 and Stripe retries them.
+
+6. **Check code that reads transactions.** `checkout`/`subscription` rows can now be
+   `pending` after checkout completes, and `refunded` or `disputed` later. Treat only
+   `status == 'completed'` as paid. Rows written by the webhook use the Stripe id
+   (`cs_...`, `in_...`, `sub_...`) as `id` instead of a UUID. `Transaction.record_checkout`,
+   `record_subscription` and `record_renewal` return nil when the row already exists.
+
+7. **Remove app patches this release replaces** (optional, they keep working): a
+   `prepend` over `fetch_api_key` / `fetch_webhook_secret` that reads Secrets Manager,
+   and controller overrides that only check `payment_status`, refuse the placeholder
+   secret or de-duplicate events. An overridden controller that calls
+   `Belt::Pay.provider.verify_webhook` and `WebhookHandler.send(:dispatch, event)` keeps
+   working; `dispatch` now also runs `Belt::Pay.on` hooks.
+
+8. **Stop seeding placeholders in Terraform (optional hygiene).** In the app's generated
+   `infrastructure/modules/pay/variables.tf`, change the defaults of `stripe_secret_key`
+   and `stripe_webhook_secret` from `"sk_test_PLACEHOLDER"` / `"whsec_PLACEHOLDER"` to
+   `""` (or regenerate with `belt g pay --force`). Existing secrets are not touched
+   (`ignore_changes`); this only affects environments created later.
+
+9. Deploy (`belt apply <env>` / your usual deploy), then send a test event from the
+   Stripe Dashboard and confirm the endpoint answers 200.
+
 ## 0.0.6 — 2026-11-02
 
 - **`pay:setup` works with a restricted runtime key.** The stored key is what the app

@@ -17,9 +17,10 @@ module <%= ns %>Controllers
     #   result
     # end
 
-    # Add custom event handlers by overriding the webhook handler:
+    # To act on an event, a hook is usually enough (no controller needed). It runs
+    # after the gem's bookkeeping, on every delivery, with the transaction it touched:
     #
-    # Belt::Pay::WebhookHandler.define_method(:handle_custom_event) do |event_data|
+    # Belt::Pay.on('charge.refunded') do |event, transaction|
     #   # Your custom logic here
     # end
   end

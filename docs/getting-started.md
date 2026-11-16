@@ -55,6 +55,15 @@ class Customer < ActiveItem::Base
 end
 ```
 
+Tell Belt Pay which model that is, wherever your app and the webhook Lambda boot, so the
+webhook can keep the customer's plan in step with their subscription:
+
+```ruby
+Belt::Pay.configure do |config|
+  config.customer_class = 'Customer'
+end
+```
+
 This adds payment methods to your model:
 
 | Method | Description |
@@ -153,11 +162,17 @@ prints these steps with your exact URL when you decline):
 3. Enter your endpoint URL: `https://<your-api-domain>/pay/webhooks`
 4. Select these events:
    - `checkout.session.completed`
+   - `checkout.session.async_payment_succeeded`
+   - `checkout.session.async_payment_failed`
    - `checkout.session.expired`
    - `invoice.paid`
    - `invoice.payment_failed`
-   - `customer.subscription.deleted`
+   - `customer.subscription.created`
    - `customer.subscription.updated`
+   - `customer.subscription.deleted`
+   - `charge.refunded`
+   - `charge.dispute.created`
+   - `charge.dispute.closed`
 5. Click **Add endpoint**
 6. Reveal and copy the **Signing secret** (starts with `whsec_`)
 7. Update your Secrets Manager secret with this value
@@ -360,6 +375,13 @@ Belt::Pay.create_checkout(current_customer, ...)
 1. Verify your endpoint URL is publicly accessible
 2. Check Stripe Dashboard → Webhooks for failed delivery attempts
 3. Ensure the webhook secret in Secrets Manager matches Stripe
+
+### Webhooks answer 500
+
+Belt Pay refuses to verify a webhook until the secret holds a real `whsec_` signing
+secret (the generated secret starts empty). The Lambda log says
+`Stripe webhook signing secret is missing or still the placeholder`. Run
+`BELT_ENV=<env> belt pay:setup` and Stripe's next retry goes through.
 
 ### Subscription shows inactive after payment
 
