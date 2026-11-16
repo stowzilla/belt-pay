@@ -37,7 +37,7 @@ module Belt
             provider_session_id: result[:session_id],
             type: mode == 'subscription' ? 'subscription' : 'checkout',
             status: 'pending',
-            currency: 'usd',
+            currency: checkout_currency(line_items, options),
             description: "Checkout session created (#{mode})",
             metadata: metadata
           )
@@ -46,6 +46,20 @@ module Belt
                         customer_id: customer.id, session_id: result[:session_id], mode: mode)
 
           result
+        end
+
+        private
+
+        # The currency the session will charge in, when the request says: the
+        # session's `currency:` or the first line item's inline price. A session
+        # sold by price id doesn't say, so the pending row has none and the webhook
+        # fills it in from the paid session.
+        def checkout_currency(line_items, options)
+          first = Array(line_items).first
+          price_data = first.is_a?(Hash) ? (first[:price_data] || first['price_data']) : nil
+          inline = price_data.is_a?(Hash) ? (price_data[:currency] || price_data['currency']) : nil
+          currency = options[:currency] || inline
+          currency&.to_s&.downcase
         end
       end
     end

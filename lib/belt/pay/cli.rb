@@ -129,13 +129,29 @@ module Belt
 
         update_secret(response, original, updated)
         delete_replaced_endpoints(replaced)
+        warn_unset(updated)
+      end
+
+      # Belt Pay refuses to call Stripe or verify a webhook with a value that is
+      # missing or still a placeholder, so say so while the operator is here.
+      def warn_unset(secret)
+        unset = %w[stripe_secret_key stripe_webhook_secret].select { |key| unset?(secret[key]) }
+        return if unset.empty?
+
+        @out.puts "Warning: #{unset.join(' and ')} #{unset.size == 1 ? 'is' : 'are'} not set in #{@secret_name}."
+        @out.puts 'Payments and webhooks are refused until a real value is stored; run this command again to set it.'
+      end
+
+      # Blank, or the placeholder older generated Terraform seeded the secret with.
+      def unset?(value)
+        blank?(value) || value.strip.match?(/_PLACEHOLDER\z/i)
       end
 
       # Returns [signing_secret, endpoints_to_delete]. Offers to create the Stripe
       # webhook endpoint (Stripe only returns a signing secret at creation time);
       # otherwise prints Dashboard instructions and prompts for the secret.
       def webhook_secret_for(api_key, existing_secret)
-        if blank?(api_key)
+        if unset?(api_key)
           @out.puts 'No Stripe secret key stored yet, so the webhook endpoint cannot be created for you.'
           return [manual_webhook_secret(nil), []]
         end
@@ -145,12 +161,13 @@ module Belt
         @out.puts "Stripe account mode: #{mode}"
         @out.puts "Webhook endpoint URL: #{url || '(unknown; run `belt apply` first or pass --webhook-url)'}"
 
-        create = !url.nil? && confirm("Create the #{mode}-mode webhook endpoint in Stripe now?", default: blank?(existing_secret))
+        create = !url.nil? && confirm("Create the #{mode}-mode webhook endpoint in Stripe now?", default: unset?(existing_secret))
         return [manual_webhook_secret(url, mode: mode), []] unless create
 
         @endpoint_key = api_key
         existing = with_endpoint_key(mode) { |key| stripe_endpoints(key) }.select { |endpoint| endpoint.url == url }
         if existing.any?
+          existing.each { |endpoint| add_missing_events(endpoint, mode) }
           ids = existing.map(&:id).join(', ')
           @out.puts "Stripe already has an endpoint for this URL (#{ids}). Stripe never re-sends a signing secret,"
           @out.puts 'so setup can only replace it with a new endpoint (the old secret stops working).'
@@ -171,6 +188,22 @@ module Belt
       rescue EndpointKeyUnavailable => e
         @out.puts e.message
         [manual_webhook_secret(url, mode: mode), []]
+      end
+
+      # An endpoint made by an older Belt Pay is subscribed to fewer events than the
+      # handler now acts on. Adding them in place keeps the endpoint's signing secret.
+      def add_missing_events(endpoint, mode)
+        current = Array(endpoint.enabled_events)
+        missing = webhook_events - current
+        return if current.include?('*') || missing.empty?
+
+        @out.puts "Endpoint #{endpoint.id} is not subscribed to: #{missing.join(', ')}"
+        return unless confirm('Add them to this endpoint? (its signing secret stays the same)', default: true)
+
+        with_endpoint_key(mode) do |key|
+          ::Stripe::WebhookEndpoint.update(endpoint.id, { enabled_events: current | webhook_events }, { api_key: key })
+        end
+        @out.puts "Endpoint #{endpoint.id} now receives #{(current | webhook_events).size} events."
       end
 
       def manual_webhook_secret(url, mode: nil)

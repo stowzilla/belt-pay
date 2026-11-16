@@ -9,17 +9,42 @@ module Belt
       # Handles API key management and provides the Stripe-specific implementations
       # that the generic Belt::Pay API delegates to.
       class Stripe
+        # A real webhook signing secret. Anything else is refused, above all the
+        # whsec_PLACEHOLDER older generated Terraform seeded the secret with: it is
+        # public, so anyone could sign an event with it.
+        WEBHOOK_SECRET_FORMAT = /\Awhsec_(?!PLACEHOLDER\z).+\z/
+
+        # The API key older generated Terraform seeded (sk_test_PLACEHOLDER).
+        API_KEY_PLACEHOLDER = /_PLACEHOLDER\z/i
+
         # Ensure the Stripe API key is set for the current request.
         # Reads from Secrets Manager via the configured secret name.
+        # @raise [ConfigurationError] when there is no key, or it is still the placeholder
         def ensure_api_key!
-          ::Stripe.api_key ||= fetch_api_key
-          raise ConfigurationError, 'Stripe API key not configured' unless ::Stripe.api_key
+          key = ::Stripe.api_key
+          fetched = blank?(key)
+          key = fetch_api_key if fetched
+          raise ConfigurationError, 'Stripe API key not configured' if blank?(key)
+
+          if API_KEY_PLACEHOLDER.match?(key)
+            raise ConfigurationError,
+                  'Stripe API key is still the placeholder; run `belt pay:setup <env>` to store a real key'
+          end
+
+          ::Stripe.api_key = key if fetched
         end
 
-        # Get the webhook signing secret for signature verification.
-        # @return [String]
+        # Get the webhook signing secret for signature verification. Only a usable
+        # secret is remembered, so a warm Lambda picks up the real one after
+        # `belt pay:setup` replaces a missing or placeholder value.
+        # @return [String, nil]
         def webhook_signing_secret
-          @webhook_signing_secret ||= fetch_webhook_secret
+          return @webhook_signing_secret if @webhook_signing_secret
+
+          secret = fetch_webhook_secret
+          secret = secret.strip if secret.is_a?(String)
+          @webhook_signing_secret = secret if usable_webhook_secret?(secret)
+          secret
         end
 
         # Create a Stripe customer for the given user.
@@ -202,8 +227,28 @@ module Belt
         # @param payload [String] Raw request body
         # @param signature [String] Stripe-Signature header
         # @return [Stripe::Event]
+        # @raise [ConfigurationError] when the signing secret is missing, blank or the
+        #   placeholder. Nothing is verified against a secret that isn't one.
         def verify_webhook(payload, signature)
-          ::Stripe::Webhook.construct_event(payload, signature, webhook_signing_secret)
+          secret = webhook_signing_secret
+          unless usable_webhook_secret?(secret)
+            raise ConfigurationError,
+                  'Stripe webhook signing secret is missing or still the placeholder; ' \
+                  'run `belt pay:setup <env>` to store the endpoint\'s whsec_ secret'
+          end
+
+          ::Stripe::Webhook.construct_event(payload, signature, secret)
+        end
+
+        # The id of the Checkout Session a payment was made through, or nil when the
+        # payment didn't come from Checkout. Refunds and disputes name only the payment.
+        # Stripe errors are raised, so the webhook fails and Stripe sends the event again.
+        # @param payment_intent_id [String]
+        # @return [String, nil]
+        def checkout_session_id_for(payment_intent_id)
+          ensure_api_key!
+          sessions = ::Stripe::Checkout::Session.list({ payment_intent: payment_intent_id, limit: 1 })
+          sessions.data.first&.id
         end
 
         private
@@ -222,11 +267,7 @@ module Belt
         end
 
         def fetch_api_key
-          secret_name = Belt::Pay.configuration.secret_name
-          return nil unless secret_name
-
-          require_secrets_helper
-          SecretsHelper.get_secret(secret_name: secret_name, key: 'stripe_secret_key', required: true)
+          read_secret(Belt::Pay.configuration.secret_name, 'stripe_secret_key')
         rescue StandardError => e
           Belt::Pay.log(:error, 'Failed to fetch Stripe API key', error: e.message)
           nil
@@ -234,19 +275,33 @@ module Belt
 
         def fetch_webhook_secret
           secret_name = Belt::Pay.configuration.webhook_secret_name || Belt::Pay.configuration.secret_name
-          return nil unless secret_name
-
-          require_secrets_helper
-          SecretsHelper.get_secret(secret_name: secret_name, key: 'stripe_webhook_secret', required: true)
+          read_secret(secret_name, 'stripe_webhook_secret')
         rescue StandardError => e
           Belt::Pay.log(:error, 'Failed to fetch Stripe webhook secret', error: e.message)
           nil
         end
 
-        def require_secrets_helper
-          require 'belt/secrets_helper' if defined?(Belt::SecretsHelper)
-        rescue LoadError
-          # SecretsHelper not available — key must be set via Stripe.api_key directly
+        # Read one key of the JSON secret `belt pay:setup` writes. An app-defined
+        # ::SecretsHelper is used when there is one; otherwise Secrets Manager is read
+        # directly. Nothing is cached here: callers keep a value once it is usable.
+        def read_secret(secret_name, key)
+          return nil if blank?(secret_name)
+          if defined?(::SecretsHelper)
+            return ::SecretsHelper.get_secret(secret_name: secret_name, key: key, required: true)
+          end
+
+          require 'aws-sdk-secretsmanager'
+          require 'json'
+          response = Aws::SecretsManager::Client.new.get_secret_value(secret_id: secret_name)
+          JSON.parse(response.secret_string)[key]
+        end
+
+        def usable_webhook_secret?(secret)
+          secret.is_a?(String) && WEBHOOK_SECRET_FORMAT.match?(secret)
+        end
+
+        def blank?(value)
+          value.nil? || value.to_s.strip.empty?
         end
       end
     end

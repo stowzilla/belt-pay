@@ -55,12 +55,34 @@ RSpec.describe Belt::Pay::CLI, 'secrets:setup with a restricted stored key' do
     allow(Stripe::WebhookEndpoint).to receive(:list) do |_params, opts|
       raise denied if opts[:api_key] == 'rk_live_runtime'
 
-      endpoints([double(id: 'we_old', url: url)])
+      endpoints([double(id: 'we_old', url: url, enabled_events: Belt::Pay::WebhookHandler::EVENTS)])
     end
     allow(Stripe::WebhookEndpoint).to receive(:create).and_return(double(id: 'we_new', secret: 'whsec_new'))
     expect(Stripe::WebhookEndpoint).to receive(:delete).with('we_old', {}, { api_key: 'sk_live_admin' })
 
     expect(run_setup('rk_live_runtime', 'y', 'sk_live_admin', 'y')).to eq(0)
+  end
+
+  it 'adds the events an older endpoint lacks without replacing it' do
+    allow(Stripe::WebhookEndpoint).to receive(:list)
+      .and_return(endpoints([double(id: 'we_old', url: url, enabled_events: %w[checkout.session.completed invoice.paid])]))
+    expect(Stripe::WebhookEndpoint).to receive(:update)
+      .with('we_old', { enabled_events: array_including('charge.refunded', 'checkout.session.async_payment_succeeded') },
+            { api_key: 'sk_live_admin' })
+    expect(Stripe::WebhookEndpoint).not_to receive(:create)
+
+    # key, create/manage endpoint: y, add events: y, replace: n, signing secret: keep
+    expect(run_setup('sk_live_admin', 'y', 'y', 'n', '')).to eq(0)
+    expect(out.string).to include('is not subscribed to:')
+  end
+
+  it 'warns when the secret still holds the placeholder values' do
+    secret.secret_string = '{"stripe_secret_key":"sk_test_PLACEHOLDER","stripe_webhook_secret":"whsec_PLACEHOLDER"}'
+    expect(Stripe::WebhookEndpoint).not_to receive(:list)
+
+    expect(run_setup('', '')).to eq(0)
+    expect(out.string).to include('No Stripe secret key stored yet')
+    expect(out.string).to include('Warning: stripe_secret_key and stripe_webhook_secret are not set')
   end
 
   it 'falls back to the Dashboard steps and still saves the stored key when no one-time key is given' do

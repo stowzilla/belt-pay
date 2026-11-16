@@ -17,6 +17,30 @@ RSpec.describe Belt::Pay::Providers::Stripe do
     it 'succeeds when api_key is already set' do
       expect { provider.ensure_api_key! }.not_to raise_error
     end
+
+    it 'refuses the placeholder key the old Terraform template seeded' do
+      allow(Stripe).to receive(:api_key).and_return(nil)
+      allow(provider).to receive(:fetch_api_key).and_return('sk_test_PLACEHOLDER')
+      expect(Stripe).not_to receive(:api_key=)
+      expect { provider.ensure_api_key! }.to raise_error(Belt::Pay::ConfigurationError, /placeholder/)
+    end
+
+    it 'treats a blank key as not configured' do
+      allow(Stripe).to receive(:api_key).and_return('')
+      allow(provider).to receive(:fetch_api_key).and_return('  ')
+      expect { provider.ensure_api_key! }.to raise_error(Belt::Pay::ConfigurationError, /not configured/)
+    end
+
+    it 'reads the key from the configured Secrets Manager secret' do
+      Belt::Pay.configuration.secret_name = 'app-dev-stripe'
+      client = instance_double(Aws::SecretsManager::Client)
+      allow(Aws::SecretsManager::Client).to receive(:new).and_return(client)
+      allow(client).to receive(:get_secret_value).with(secret_id: 'app-dev-stripe')
+        .and_return(double(secret_string: '{"stripe_secret_key":"rk_test_real"}'))
+      allow(Stripe).to receive(:api_key).and_return(nil)
+      expect(Stripe).to receive(:api_key=).with('rk_test_real')
+      provider.ensure_api_key!
+    end
   end
 
   describe '#create_customer' do
@@ -282,6 +306,56 @@ RSpec.describe Belt::Pay::Providers::Stripe do
 
       result = provider.create_setup_intent('cus_stripe_123', customer_id: 'cust-123')
       expect(result).to eq({ client_secret: 'seti_xxx_secret_yyy', setup_intent_id: 'seti_123' })
+    end
+  end
+
+  describe '#verify_webhook with an unusable signing secret' do
+    let(:payload) { '{"id":"evt_forged","object":"event","type":"checkout.session.completed"}' }
+
+    # What an attacker can do: sign a made-up event with a secret they know.
+    def signed_with(secret)
+      timestamp = Time.now
+      signature = Stripe::Webhook::Signature.compute_signature(timestamp, payload, secret)
+      Stripe::Webhook::Signature.generate_header(timestamp, signature)
+    end
+
+    it 'refuses an event signed with the published placeholder secret' do
+      allow(provider).to receive(:fetch_webhook_secret).and_return('whsec_PLACEHOLDER')
+      expect { provider.verify_webhook(payload, signed_with('whsec_PLACEHOLDER')) }
+        .to raise_error(Belt::Pay::ConfigurationError, /placeholder/)
+    end
+
+    ['', '   ', nil, 'not-a-signing-secret', 'whsec_'].each do |secret|
+      it "refuses to verify against #{secret.inspect}" do
+        allow(provider).to receive(:fetch_webhook_secret).and_return(secret)
+        expect { provider.verify_webhook(payload, signed_with(secret.to_s)) }
+          .to raise_error(Belt::Pay::ConfigurationError)
+      end
+    end
+
+    it 'verifies an event signed with a real secret' do
+      allow(provider).to receive(:fetch_webhook_secret).and_return('whsec_real123')
+      expect(provider.verify_webhook(payload, signed_with('whsec_real123')).id).to eq('evt_forged')
+    end
+
+    it 'asks again after an unusable secret, so a warm Lambda picks up the fix' do
+      allow(provider).to receive(:fetch_webhook_secret).and_return('whsec_PLACEHOLDER', 'whsec_real123')
+      expect { provider.verify_webhook(payload, signed_with('whsec_PLACEHOLDER')) }
+        .to raise_error(Belt::Pay::ConfigurationError)
+      expect(provider.verify_webhook(payload, signed_with('whsec_real123')).id).to eq('evt_forged')
+    end
+  end
+
+  describe '#checkout_session_id_for' do
+    it 'asks Stripe which Checkout Session a payment came from' do
+      expect(Stripe::Checkout::Session).to receive(:list).with({ payment_intent: 'pi_1', limit: 1 })
+        .and_return(double(data: [double(id: 'cs_1')]))
+      expect(provider.checkout_session_id_for('pi_1')).to eq('cs_1')
+    end
+
+    it 'is nil for a payment that did not come from Checkout' do
+      allow(Stripe::Checkout::Session).to receive(:list).and_return(double(data: []))
+      expect(provider.checkout_session_id_for('pi_1')).to be_nil
     end
   end
 

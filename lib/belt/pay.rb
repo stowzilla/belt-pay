@@ -68,6 +68,45 @@ module Belt
         @plans = PlanRegistry.new
       end
 
+      # --- Webhook hooks ---
+
+      # Run a block when the webhook receives a Stripe event of one of the given
+      # types, after Belt Pay's own bookkeeping. The block gets the Stripe event and
+      # the Belt::Pay::Transaction it touched (nil when the event has none).
+      #
+      # Stripe delivers events at least once, and a hook that raises fails the
+      # webhook so Stripe sends the event again. Make hooks safe to repeat, and read
+      # `transaction.status` to decide what the customer has: `completed` is paid,
+      # `refunded` and `disputed` are not.
+      #
+      # @example
+      #   Belt::Pay.on('checkout.session.completed', 'checkout.session.async_payment_succeeded') do |event, transaction|
+      #     Orders.fulfil(transaction) if transaction&.status == 'completed'
+      #   end
+      #   Belt::Pay.on('charge.refunded', 'charge.dispute.created') do |event, transaction|
+      #     Orders.revoke(transaction) if transaction && transaction.status != 'completed'
+      #   end
+      #
+      # @param event_types [Array<String>] Stripe event types, e.g. 'charge.refunded'
+      def on(*event_types, &block)
+        raise ArgumentError, 'Belt::Pay.on needs a block' unless block
+        raise ArgumentError, 'Belt::Pay.on needs at least one event type' if event_types.empty?
+
+        event_types.flatten.each { |type| hooks[type.to_s] << block }
+        nil
+      end
+
+      # Run the hooks registered for an event type. Called by the webhook handler.
+      def run_hooks(event_type, event, transaction = nil)
+        hooks.fetch(event_type.to_s, []).each { |hook| hook.call(event, transaction) }
+        nil
+      end
+
+      # Remove every registered hook (useful for tests).
+      def reset_hooks!
+        @hooks = nil
+      end
+
       # --- Convenience API (provider-agnostic names) ---
 
       # Ensure a payment provider customer exists for this user.
@@ -158,6 +197,10 @@ module Belt
       end
 
       private
+
+      def hooks
+        @hooks ||= Hash.new { |registry, type| registry[type] = [] }
+      end
 
       # Resolve a plan key (+ interval) to its Stripe price ID.
       def resolve_plan_price(plan_key, interval)

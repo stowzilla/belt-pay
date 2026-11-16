@@ -31,9 +31,11 @@ module Belt
         private
 
         # Get the raw request body for signature verification.
-        # Stripe requires the exact raw body — not parsed JSON.
+        # Stripe requires the exact raw body — not parsed JSON. API Gateway sends
+        # it base64-encoded when isBase64Encoded is set.
         def raw_body
-          event.dig('body') || ''
+          body = event.dig('body') || ''
+          event.dig('isBase64Encoded') ? body.unpack1('m') : body
         end
 
         def headers

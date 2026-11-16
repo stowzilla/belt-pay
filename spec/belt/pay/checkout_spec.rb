@@ -56,13 +56,23 @@ RSpec.describe Belt::Pay::Checkout do
           provider_session_id: 'cs_123',
           type: 'subscription',
           status: 'pending',
-          currency: 'usd'
+          currency: nil
         )
       )
 
       described_class.create(customer,
         line_items: [{ price: 'price_xxx', quantity: 1 }],
         mode: 'subscription',
+        success_url: 'https://app.example.com/success',
+        cancel_url: 'https://app.example.com/cancel')
+    end
+
+    it 'records the currency of an inline price rather than assuming usd' do
+      allow(provider).to receive(:create_checkout_session).and_return(checkout_result)
+      expect(Belt::Pay::Transaction).to receive(:create!).with(hash_including(currency: 'eur'))
+
+      described_class.create(customer,
+        line_items: [{ price_data: { currency: 'EUR', unit_amount: 500, product: 'prod_1' }, quantity: 1 }],
         success_url: 'https://app.example.com/success',
         cancel_url: 'https://app.example.com/cancel')
     end

@@ -128,6 +128,21 @@ RSpec.describe Belt::Pay::Controllers::WebhooksController do
       end
     end
 
+    context 'when API Gateway base64-encodes the body' do
+      let(:event_data) do
+        { 'body' => ['{"id":"evt_123"}'].pack('m0'), 'isBase64Encoded' => true,
+          'headers' => { 'Stripe-Signature' => 't=123,v1=abc' } }
+      end
+
+      it 'verifies the decoded body' do
+        expect(Belt::Pay::WebhookHandler).to receive(:process)
+          .with(payload: '{"id":"evt_123"}', signature: 't=123,v1=abc')
+          .and_return({ received: true })
+
+        expect(controller.webhook[:statusCode]).to eq(200)
+      end
+    end
+
     context 'when using lowercase stripe-signature header' do
       let(:event_data) do
         { 'body' => '{"id":"evt_123"}', 'headers' => { 'stripe-signature' => 't=123,v1=abc' } }

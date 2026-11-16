@@ -37,7 +37,8 @@ resource "aws_secretsmanager_secret" "stripe" {
   })
 }
 
-# Initial secret value — update manually or via CI after creation
+# The secret starts empty: Belt Pay refuses to run with a missing key or signing
+# secret, and nothing guessable is ever stored. `belt pay:setup <env>` fills it in.
 resource "aws_secretsmanager_secret_version" "stripe" {
   secret_id = aws_secretsmanager_secret.stripe.id
   secret_string = jsonencode({
