@@ -275,15 +275,17 @@ module Belt
           transaction
         end
 
-        # The declared plan a subscription is for: the `plan` its metadata carries
-        # (Belt::Pay.subscribe stamps it), else the plan declared for its price.
+        # The declared plan a subscription is for: the plan declared for its price,
+        # which stays right when the customer changes plan in the billing portal;
+        # else the `plan` Belt::Pay.subscribe stamped on its metadata.
         def subscription_plan_key(subscription)
-          stamped = value(value(subscription, :metadata), :plan)
-          return stamped.to_s unless stamped.to_s.empty?
-
           items = value(value(subscription, :items), :data)
           price_id = reference_id(value(Array(items).first, :price))
-          Belt::Pay.plan_for_price(price_id)&.key&.to_s
+          declared = Belt::Pay.plan_for_price(price_id)
+          return declared.key.to_s if declared
+
+          stamped = value(value(subscription, :metadata), :plan).to_s
+          stamped.empty? ? nil : stamped
         end
 
         def find_customer(customer_id)
@@ -348,16 +350,15 @@ module Belt
           return unless transaction
 
           outcome = value(dispute, :status).to_s
-          if transaction.status == 'disputed'
-            if %w[won warning_closed].include?(outcome)
-              transaction.status = 'completed'
-              transaction.description = "Dispute #{outcome == 'won' ? 'won' : 'closed'} (#{value(dispute, :id)})"
-              transaction.save!
-            elsif outcome == 'lost'
-              transaction.status = 'refunded'
-              transaction.description = "Dispute lost (#{value(dispute, :id)})"
-              transaction.save!
-            end
+          if outcome == 'lost' && %w[completed disputed].include?(transaction.status)
+            # Also from completed: the dispute's opening event may never have arrived.
+            transaction.status = 'refunded'
+            transaction.description = "Dispute lost (#{value(dispute, :id)})"
+            transaction.save!
+          elsif %w[won warning_closed].include?(outcome) && transaction.status == 'disputed'
+            transaction.status = 'completed'
+            transaction.description = "Dispute #{outcome == 'won' ? 'won' : 'closed'} (#{value(dispute, :id)})"
+            transaction.save!
           end
 
           Belt::Pay.log(:info, 'Belt::Pay::WebhookHandler: dispute closed',

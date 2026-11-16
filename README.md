@@ -182,8 +182,7 @@ customer named by a subscription's `app_customer_id` and keep `pay_plan` /
   `trialing`. One that still needs its first payment (`incomplete`, the usual case)
   grants nothing yet.
 - When Stripe reports the subscription `active` or `trialing`, the webhook sets
-  `pay_plan` (from the subscription's `plan` metadata, else the plan declared for its
-  price).
+  `pay_plan` (the plan declared for the subscription's price, else its `plan` metadata).
 - When it becomes `canceled`, `unpaid` or `incomplete_expired`, the webhook clears
   `pay_plan`. `past_due` keeps it while Stripe retries the payment.
 

@@ -115,8 +115,13 @@ module Belt
       # @param immediately [Boolean] Cancel now (true) or at period end (false, default)
       def cancel_subscription!(immediately: false)
         Belt::Pay.cancel_subscription(self, immediately: immediately)
-        self.pay_subscription_id = nil if immediately
-        save(validate: false) if immediately
+        return unless immediately
+
+        # The plan goes with the subscription. At period end it stays until Stripe
+        # deletes the subscription and the webhook takes it back.
+        self.pay_subscription_id = nil
+        self.pay_plan = nil
+        save(validate: false)
       end
 
       # Generate a billing portal URL for self-service management.

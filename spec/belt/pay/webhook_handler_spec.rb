@@ -301,6 +301,22 @@ RSpec.describe Belt::Pay::WebhookHandler do
       expect(customer.pay_plan).to eq('pro')
     end
 
+    it 'goes by the price over stale metadata after a plan change in the billing portal' do
+      Belt::Pay.plans { plan(:team) { price 49, stripe_price: 'price_team' } }
+      customer.pay_plan = 'pro'
+      stripe_has(items: { data: [{ price: { id: 'price_team' } }] })
+      deliver('customer.subscription.updated', subscription)
+      expect(customer.pay_plan).to eq('team')
+    end
+
+    it 'changes nothing for a deletion the app already acted on' do
+      customer.pay_subscription_id = nil
+      stripe_has(status: 'canceled')
+      deliver('customer.subscription.deleted', subscription(status: 'canceled'))
+      expect(customer).to have_attributes(pay_plan: nil, pay_subscription_id: nil)
+      expect(customer.saves).to be_empty
+    end
+
     it 'resolves the plan from the price when the metadata names none' do
       Belt::Pay.plans { plan(:team) { price 49, stripe_price: 'price_team' } }
       stripe_has(metadata: { app_customer_id: 'cust-1' }, items: { data: [{ price: { id: 'price_team' } }] })
@@ -464,6 +480,11 @@ RSpec.describe Belt::Pay::WebhookHandler do
       deliver('charge.dispute.created', dispute)
       deliver('charge.dispute.closed', dispute(status: 'won'))
       expect(rows['txn-1'].status).to eq('completed')
+    end
+
+    it 'marks it refunded when a lost dispute is the first the webhook hears of it' do
+      deliver('charge.dispute.closed', dispute(status: 'lost'))
+      expect(rows['txn-1'].status).to eq('refunded')
     end
 
     it 'marks it refunded when the dispute is lost' do

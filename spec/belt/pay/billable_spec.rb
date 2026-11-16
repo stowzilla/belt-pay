@@ -236,6 +236,12 @@ RSpec.describe Belt::Pay::Billable do
         expect(customer.pay_subscription_id).to be_nil
       end
 
+      it 'takes the plan back with the subscription' do
+        customer.pay_plan = 'pro'
+        customer.cancel_subscription!(immediately: true)
+        expect(customer.pay_plan).to be_nil
+      end
+
       it 'calls save' do
         expect(customer).to receive(:save).with(validate: false).and_return(true)
         customer.cancel_subscription!(immediately: true)
