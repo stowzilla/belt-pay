@@ -9,15 +9,15 @@ variable "environment" {
 }
 
 variable "stripe_secret_key" {
-  description = "Stripe secret API key (initial value — update via console/CI)"
+  description = "Stripe secret API key. Leave empty and store it with `belt pay:setup <env>`"
   type        = string
-  default     = "sk_test_PLACEHOLDER"
+  default     = ""
   sensitive   = true
 }
 
 variable "stripe_webhook_secret" {
-  description = "Stripe webhook signing secret (initial value — update via console/CI)"
+  description = "Stripe webhook signing secret. Leave empty and store it with `belt pay:setup <env>`"
   type        = string
-  default     = "whsec_PLACEHOLDER"
+  default     = ""
   sensitive   = true
 }

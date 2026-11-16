@@ -59,7 +59,9 @@ Belt::Pay.plans.paid                             # => [pro, ...]
 Belt::Pay.plans.featured                         # => the :pro plan
 Belt::Pay.plans.to_a                             # => [{ key:, name:, prices:, limits:, ... }] for your frontend
 
-# Gate features and enforce limits
+# Gate features and enforce limits. The plan is granted once Stripe reports the
+# subscription active (or trialing) and taken back when it ends; see
+# "Plans follow the subscription" below.
 customer.on_plan?(:pro)                          # => true
 customer.plan_allows?(:sso)                      # => true
 customer.within_limit?(:projects, current_count) # => false once the ceiling is hit
@@ -165,8 +167,27 @@ Belt::Pay.configure do |config|
   config.provider = :stripe                    # Only :stripe for now
   config.secret_name = 'myapp-prod-stripe'     # Secrets Manager secret
   config.table_name_prefix = 'myapp-prod'      # DynamoDB table prefix
+  config.customer_class = 'Customer'           # Your Billable model (class or name)
 end
 ```
+
+#### Plans follow the subscription
+
+`customer_class` is the model that includes `Belt::Pay::Billable`. Set it wherever the
+webhook Lambda boots (the model must be loadable there). The webhook uses it to find the
+customer named by a subscription's `app_customer_id` and keep `pay_plan` /
+`pay_subscription_id` in step with Stripe:
+
+- `subscribe!(plan:)` records `pay_plan` only if the subscription is already `active` or
+  `trialing`. One that still needs its first payment (`incomplete`, the usual case)
+  grants nothing yet.
+- When Stripe reports the subscription `active` or `trialing`, the webhook sets
+  `pay_plan` (the plan declared for the subscription's price, else its `plan` metadata).
+- When it becomes `canceled`, `unpaid` or `incomplete_expired`, the webhook clears
+  `pay_plan`. `past_due` keeps it while Stripe retries the payment.
+
+Without `customer_class` the webhook cannot do any of this: it logs an error on each
+subscription event and `pay_plan` is never set for a subscription that starts unpaid.
 
 ### Secrets Manager Format
 
@@ -178,6 +199,14 @@ The Stripe secret should contain:
   "stripe_webhook_secret": "whsec_..."
 }
 ```
+
+Belt Pay reads it straight from Secrets Manager (the webhook and API Lambdas need
+`secretsmanager:GetSecretValue` on it, which the generated `read_secrets_policy_arn`
+grants). The generated Terraform creates the secret with both values empty, and Belt Pay
+refuses to work with a value that is missing or a placeholder: `verify_webhook` raises
+`Belt::Pay::ConfigurationError` (the webhook answers 500) unless the signing secret is a
+real `whsec_` secret, and no Stripe call is made without a real API key. Nothing is ever
+verified against a secret someone else could know.
 
 ### Setting Up and Managing Secrets
 
@@ -200,9 +229,16 @@ either prompt blank to preserve its existing value. Use `--webhook-url` /
 `BELT_PAY_WEBHOOK_URL` or `--webhook-events` / `BELT_PAY_WEBHOOK_EVENTS` to override the
 defaults. Test (`sk_test_`) and live (`sk_live_`) keys get separate endpoints and secrets.
 
+If Stripe already has an endpoint for the URL and it lacks some handled events (one
+created by an older Belt Pay, say), setup offers to add them to it in place, which keeps
+its signing secret. Setup also warns when the key or signing secret is still unset.
+
 Prefer a [restricted key](https://docs.stripe.com/keys#limit-access) (`rk_`) as the
 stored key, scoped to what your app calls at runtime (typically Customers, Checkout
-Sessions, Customer portal and Subscriptions). It doesn't need Webhook Endpoints access:
+Sessions, Customer portal and Subscriptions). The webhook reads Checkout Sessions (to
+find the purchase a refund or dispute belongs to) and Subscriptions (to check a
+subscription's current status), so give those at least Read. It doesn't need Webhook
+Endpoints access:
 when Stripe refuses it for the endpoint step, setup asks once for a key that can manage
 endpoints (your `sk_` secret key, or a restricted key with Webhook Endpoints: Write),
 uses it for that step only, and doesn't store it.
@@ -313,26 +349,63 @@ end
 
 ## Webhook Events
 
-The gem automatically handles these Stripe webhook events:
+The gem automatically handles these Stripe webhook events
+(`Belt::Pay::WebhookHandler::EVENTS`, which is what `belt pay:setup` subscribes the
+endpoint to):
 
 | Event | Behavior |
 |-------|----------|
-| `checkout.session.completed` | Marks pending transaction as completed |
-| `checkout.session.expired` | Marks pending transaction as failed |
-| `invoice.paid` | Records subscription renewal transaction |
+| `checkout.session.completed` | Completes the transaction if the session is paid (`payment_status` `paid` or `no_payment_required`). A session paid by a delayed method (bank debit, voucher) stays `pending` |
+| `checkout.session.async_payment_succeeded` | Completes the pending transaction of a delayed payment |
+| `checkout.session.async_payment_failed` | Marks it `failed` |
+| `checkout.session.expired` | Marks pending transaction as `failed` |
+| `invoice.paid` | Records a subscription renewal transaction (once per invoice) |
 | `invoice.payment_failed` | Logs payment failure |
-| `customer.subscription.deleted` | Logs subscription cancellation |
-| `customer.subscription.updated` | Logs subscription status changes |
+| `customer.subscription.created` / `.updated` / `.deleted` | Sets or clears the customer's `pay_plan` to match the subscription (see [Plans follow the subscription](#plans-follow-the-subscription)) and settles the subscription's transaction |
+| `charge.refunded` | Records `amount_refunded_cents`; a full refund marks the transaction `refunded` |
+| `charge.dispute.created` | Marks the transaction `disputed` |
+| `charge.dispute.closed` | Won: `completed` again. Lost: `refunded` |
+
+Stripe delivers events at least once, and anyone with Dashboard access can send one
+again. Handling is safe to repeat: rows the webhook creates are keyed on the Checkout
+Session or invoice id, and only a `pending` transaction can become `completed`, so a
+redelivered event never adds a row or revives a refunded purchase.
+
+**Only `completed` means the customer has paid.** If your app decides what someone owns
+from `customer.transactions`, check `status == 'completed'`.
+
+### Acting on Events
+
+Register a hook to run your own code when an event arrives, after the gem's bookkeeping.
+The block gets the Stripe event and the `Belt::Pay::Transaction` it touched (`nil` when
+the event has none):
+
+```ruby
+# Wherever the webhook Lambda boots
+Belt::Pay.on('checkout.session.completed', 'checkout.session.async_payment_succeeded') do |event, transaction|
+  Orders.fulfil(transaction) if transaction&.status == 'completed'
+end
+
+Belt::Pay.on('charge.refunded', 'charge.dispute.created', 'charge.dispute.closed') do |event, transaction|
+  Orders.revoke(transaction) if transaction && transaction.status != 'completed'
+end
+```
+
+Hooks run on every delivery, including repeats, so make them safe to run twice and go by
+`transaction.status` rather than the event alone. A hook that raises fails the webhook
+(HTTP 500) and Stripe sends the event again later. A hook can be registered for any
+event type, including ones the gem does nothing with; add those to the endpoint with
+`--webhook-events` or in the Dashboard.
 
 ### Customizing Webhook Behavior
 
-Override the webhook controller to add custom logic:
+For anything a hook can't do, override the webhook controller:
 
 ```bash
 belt g pay --controllers
 ```
 
-This generates a controller in your app that inherits from the gem's default. Override individual handler methods as needed.
+This generates a controller in your app that inherits from the gem's default.
 
 ## Transaction Model
 
@@ -350,14 +423,16 @@ end
 
 | Field | Description |
 |-------|-------------|
-| `id` | UUID primary key |
+| `id` | Primary key: a UUID, or the Stripe id (Checkout Session, invoice, subscription) for rows that must exist only once |
 | `customer_id` | Your app's customer/user ID |
 | `provider` | Payment provider (`stripe`) |
 | `provider_session_id` | Stripe checkout session ID |
 | `provider_subscription_id` | Stripe subscription ID |
+| `provider_payment_intent_id` | Stripe PaymentIntent ID of a paid checkout |
 | `type` | `checkout`, `subscription`, `subscription_renewal`, `refund` |
-| `status` | `pending`, `completed`, `failed`, `refunded`, `canceled` |
+| `status` | `pending` (not paid yet), `completed` (paid), `failed`, `refunded`, `disputed`, `canceled` |
 | `amount_cents` | Amount in cents |
+| `amount_refunded_cents` | How much of it has been refunded, if any |
 | `currency` | ISO currency code |
 | `metadata` | Free-form JSON metadata |
 | `created_at` | ISO 8601 timestamp |
@@ -372,11 +447,11 @@ module "pay" {
   app_name    = var.app_name
   environment = var.environment
 
-  # Set these or update secrets manually after apply
-  # stripe_secret_key     = var.stripe_secret_key
-  # stripe_webhook_secret = var.stripe_webhook_secret
 }
 ```
+
+The secret is created empty. Store the real values with `belt pay:setup <env>` after
+`belt apply`; until then Belt Pay refuses to call Stripe or accept a webhook.
 
 ## Stripe Dashboard Setup
 
@@ -387,11 +462,17 @@ secret for you. To do it by hand instead:
 2. Add endpoint: `https://<your-api-domain>/pay/webhooks`
 3. Select events:
    - `checkout.session.completed`
+   - `checkout.session.async_payment_succeeded`
+   - `checkout.session.async_payment_failed`
    - `checkout.session.expired`
    - `invoice.paid`
    - `invoice.payment_failed`
-   - `customer.subscription.deleted`
+   - `customer.subscription.created`
    - `customer.subscription.updated`
+   - `customer.subscription.deleted`
+   - `charge.refunded`
+   - `charge.dispute.created`
+   - `charge.dispute.closed`
 4. Copy the signing secret into your Secrets Manager secret
 
 ## Removing

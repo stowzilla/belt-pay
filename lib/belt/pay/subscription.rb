@@ -4,6 +4,13 @@ module Belt
   module Pay
     # Manages subscriptions — create, cancel, check status.
     module Subscription
+      # Stripe subscription statuses that entitle the customer to the plan.
+      ACTIVE_STATUSES = %w[active trialing].freeze
+
+      # Statuses that mean the plan is no longer paid for. `past_due` is neither:
+      # Stripe is still retrying the payment, and ends it as one of these.
+      ENDED_STATUSES = %w[canceled unpaid incomplete_expired].freeze
+
       class << self
         # Create a subscription for a customer.
         # @param customer [Object] App model with Billable included
@@ -19,11 +26,13 @@ module Belt
             metadata: metadata.merge(app_customer_id: customer.id)
           )
 
-          # Record the transaction
+          # Record the transaction. A subscription that still needs its first
+          # payment is pending; the webhook completes it once Stripe says active.
           Transaction.record_subscription(
             customer_id: customer.id,
             subscription_id: result[:subscription_id],
             amount_cents: 0, # Amount comes from invoice.paid webhook
+            status: ACTIVE_STATUSES.include?(result[:status].to_s) ? 'completed' : 'pending',
             metadata: metadata.merge(price_id: price_id)
           )
 

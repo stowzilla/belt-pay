@@ -20,6 +20,22 @@ RSpec.describe Belt::Pay::Configuration do
     end
   end
 
+  describe '#customer_model' do
+    it 'is nil until customer_class is configured' do
+      expect(config.customer_model).to be_nil
+    end
+
+    it 'returns the configured class' do
+      config.customer_class = String
+      expect(config.customer_model).to eq(String)
+    end
+
+    it 'resolves a class given by name' do
+      config.customer_class = 'Belt::Pay::Configuration'
+      expect(config.customer_model).to eq(described_class)
+    end
+  end
+
   describe '#transactions_table_name' do
     it 'builds table name from prefix' do
       config.table_name_prefix = 'myapp-prod'

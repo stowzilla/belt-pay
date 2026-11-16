@@ -89,6 +89,14 @@ RSpec.describe Belt::Pay::Billable do
       expect(customer.pay_plan).to eq('pro')
     end
 
+    it 'does not record the plan while the subscription still needs its first payment' do
+      allow(Belt::Pay).to receive(:subscribe).and_return({ subscription_id: 'sub_new_789', status: 'incomplete' })
+
+      customer.subscribe!(plan: :pro)
+      expect(customer.pay_plan).to be_nil
+      expect(customer.pay_subscription_id).to eq('sub_new_789')
+    end
+
     it 'sets pay_subscription_id from the result' do
       customer.subscribe!(price_id: 'price_xxx')
       expect(customer.pay_subscription_id).to eq('sub_new_789')
@@ -226,6 +234,12 @@ RSpec.describe Belt::Pay::Billable do
       it 'nils out pay_subscription_id' do
         customer.cancel_subscription!(immediately: true)
         expect(customer.pay_subscription_id).to be_nil
+      end
+
+      it 'takes the plan back with the subscription' do
+        customer.pay_plan = 'pro'
+        customer.cancel_subscription!(immediately: true)
+        expect(customer.pay_plan).to be_nil
       end
 
       it 'calls save' do
