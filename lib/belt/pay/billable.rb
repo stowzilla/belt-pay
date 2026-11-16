@@ -48,7 +48,11 @@ module Belt
       #
       # Pass either a declared plan key (`plan:`) or a raw `price_id:`.
       # When a plan key is given, the customer's `pay_plan` is recorded so
-      # limits/features can be checked later without a Stripe round-trip.
+      # limits/features can be checked later without a Stripe round-trip, but only
+      # once the subscription is active or trialing. A subscription that still needs
+      # its first payment (the usual case: status `incomplete`) grants nothing here;
+      # the webhook sets `pay_plan` when Stripe reports it active, and takes it back
+      # when the subscription ends. That needs `Belt::Pay.configuration.customer_class`.
       #
       # @param plan [Symbol, String, nil] A declared plan key (see Belt::Pay.plans)
       # @param price_id [String, nil] Provider price ID (overrides plan lookup)
@@ -59,7 +63,7 @@ module Belt
         result = Belt::Pay.subscribe(self, plan: plan, price_id: price_id,
                                            interval: interval, metadata: metadata)
         self.pay_subscription_id = result[:subscription_id]
-        self.pay_plan = plan.to_s if plan
+        self.pay_plan = plan.to_s if plan && Subscription::ACTIVE_STATUSES.include?(result[:status].to_s)
         save(validate: false)
         result
       end

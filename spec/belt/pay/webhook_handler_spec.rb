@@ -242,22 +242,164 @@ RSpec.describe Belt::Pay::WebhookHandler do
     end
   end
 
-  describe 'customer.subscription.deleted' do
-    it 'logs the deletion' do
-      expect(Belt::Pay).to receive(:log).with(:info, 'Belt::Pay::WebhookHandler: subscription deleted',
-                                              customer_id: 'cust-1', subscription_id: 'sub_del_123')
-      deliver('customer.subscription.deleted', { id: 'sub_del_123', object: 'subscription',
-                                                 metadata: { app_customer_id: 'cust-1' } })
-    end
-  end
+  describe 'customer.subscription events' do
+    let(:customer_class) do
+      Struct.new(:id, :pay_subscription_id, :pay_plan) do
+        def save(validate: true)
+          (@saves ||= []) << validate
+          true
+        end
 
-  describe 'customer.subscription.updated' do
+        def saves
+          @saves || []
+        end
+      end
+    end
+    let(:customer) { customer_class.new('cust-1', 'sub_1', nil) }
+    let(:model) { double('CustomerModel') }
+
+    def subscription(**overrides)
+      { id: 'sub_1', object: 'subscription', status: 'active',
+        metadata: { app_customer_id: 'cust-1', plan: 'pro' } }.merge(overrides)
+    end
+
+    # What Stripe says the subscription is now, whatever the event carried.
+    def stripe_has(**overrides)
+      allow(provider).to receive(:retrieve_subscription).with('sub_1')
+        .and_return(Stripe::Subscription.construct_from(subscription(**overrides)))
+    end
+
+    before do
+      Belt::Pay.configuration.customer_class = model
+      allow(model).to receive(:find).with('cust-1').and_return(customer)
+    end
+
     it 'logs the update with status' do
+      stripe_has(status: 'past_due')
       expect(Belt::Pay).to receive(:log).with(:info, 'Belt::Pay::WebhookHandler: subscription updated',
-                                              customer_id: 'cust-1', subscription_id: 'sub_upd_123',
-                                              status: 'past_due')
-      deliver('customer.subscription.updated', { id: 'sub_upd_123', object: 'subscription', status: 'past_due',
-                                                 metadata: { app_customer_id: 'cust-1' } })
+                                              customer_id: 'cust-1', subscription_id: 'sub_1', status: 'past_due')
+      deliver('customer.subscription.updated', subscription(status: 'past_due'))
+    end
+
+    it 'logs the deletion' do
+      stripe_has(status: 'canceled')
+      expect(Belt::Pay).to receive(:log).with(:info, 'Belt::Pay::WebhookHandler: subscription deleted',
+                                              customer_id: 'cust-1', subscription_id: 'sub_1')
+      deliver('customer.subscription.deleted', subscription(status: 'canceled'))
+    end
+
+    it 'gives the customer the plan once the subscription is active' do
+      stripe_has(status: 'active')
+      deliver('customer.subscription.updated', subscription)
+      expect(customer.pay_plan).to eq('pro')
+      expect(customer.saves).to eq([false])
+    end
+
+    it 'gives the plan on a subscription created already trialing' do
+      stripe_has(status: 'trialing')
+      deliver('customer.subscription.created', subscription(status: 'trialing'))
+      expect(customer.pay_plan).to eq('pro')
+    end
+
+    it 'resolves the plan from the price when the metadata names none' do
+      Belt::Pay.plans { plan(:team) { price 49, stripe_price: 'price_team' } }
+      stripe_has(metadata: { app_customer_id: 'cust-1' }, items: { data: [{ price: { id: 'price_team' } }] })
+      deliver('customer.subscription.updated', subscription)
+      expect(customer.pay_plan).to eq('team')
+    end
+
+    it 'adopts a subscription started through Checkout' do
+      customer.pay_subscription_id = nil
+      stripe_has(status: 'active')
+      deliver('customer.subscription.created', subscription)
+      expect(customer).to have_attributes(pay_subscription_id: 'sub_1', pay_plan: 'pro')
+    end
+
+    it 'grants nothing while the first payment is outstanding' do
+      stripe_has(status: 'incomplete')
+      deliver('customer.subscription.created', subscription(status: 'incomplete'))
+      expect(customer.pay_plan).to be_nil
+      expect(customer.saves).to be_empty
+    end
+
+    it 'keeps the plan while Stripe is retrying a failed payment' do
+      customer.pay_plan = 'pro'
+      stripe_has(status: 'past_due')
+      deliver('customer.subscription.updated', subscription(status: 'past_due'))
+      expect(customer.pay_plan).to eq('pro')
+    end
+
+    it 'takes the plan back when the subscription goes unpaid' do
+      customer.pay_plan = 'pro'
+      stripe_has(status: 'unpaid')
+      deliver('customer.subscription.updated', subscription(status: 'unpaid'))
+      expect(customer).to have_attributes(pay_plan: nil, pay_subscription_id: 'sub_1')
+    end
+
+    it 'takes the plan and the subscription back when it is deleted' do
+      customer.pay_plan = 'pro'
+      stripe_has(status: 'canceled')
+      deliver('customer.subscription.deleted', subscription(status: 'canceled'))
+      expect(customer).to have_attributes(pay_plan: nil, pay_subscription_id: nil)
+    end
+
+    it 'goes by what Stripe says now, not a stale event sent again' do
+      customer.pay_plan = nil
+      stripe_has(status: 'canceled')
+      deliver('customer.subscription.updated', subscription(status: 'active'))
+      expect(customer.pay_plan).to be_nil
+    end
+
+    it "leaves the plan alone when another subscription than the customer's ends" do
+      customer.pay_subscription_id = 'sub_newer'
+      customer.pay_plan = 'pro'
+      stripe_has(status: 'canceled')
+      deliver('customer.subscription.deleted', subscription(status: 'canceled'))
+      expect(customer).to have_attributes(pay_plan: 'pro', pay_subscription_id: 'sub_newer')
+    end
+
+    it 'ignores a subscription with no app_customer_id without asking Stripe' do
+      expect(provider).not_to receive(:retrieve_subscription)
+      deliver('customer.subscription.updated', subscription(metadata: {}))
+    end
+
+    it 'logs an error and changes nothing when customer_class is not configured' do
+      Belt::Pay.configuration.customer_class = nil
+      stripe_has(status: 'active')
+      expect(Belt::Pay).to receive(:log).with(:error, /customer_class is not configured/, customer_id: 'cust-1')
+      deliver('customer.subscription.updated', subscription)
+      expect(customer.pay_plan).to be_nil
+    end
+
+    it 'raises when Stripe cannot be asked, so the event is retried' do
+      allow(provider).to receive(:retrieve_subscription).and_raise(Stripe::APIConnectionError.new('down'))
+      expect { deliver('customer.subscription.updated', subscription) }.to raise_error(Stripe::APIConnectionError)
+    end
+
+    context 'with the transaction Subscription.create recorded' do
+      before do
+        rows['sub_1'] = transaction_class.new(id: 'sub_1', customer_id: 'cust-1', type: 'subscription',
+                                              status: 'pending')
+      end
+
+      it 'completes it when the subscription becomes active' do
+        stripe_has(status: 'active')
+        deliver('customer.subscription.updated', subscription)
+        expect(rows['sub_1'].status).to eq('completed')
+      end
+
+      it 'fails it when the first payment never arrives' do
+        stripe_has(status: 'incomplete_expired')
+        deliver('customer.subscription.updated', subscription(status: 'incomplete_expired'))
+        expect(rows['sub_1'].status).to eq('failed')
+      end
+
+      it 'cancels it when the subscription ends' do
+        rows['sub_1'].status = 'completed'
+        stripe_has(status: 'canceled')
+        deliver('customer.subscription.deleted', subscription(status: 'canceled'))
+        expect(rows['sub_1'].status).to eq('canceled')
+      end
     end
   end
 

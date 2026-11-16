@@ -14,8 +14,9 @@ module Belt
         checkout.session.expired
         invoice.paid
         invoice.payment_failed
-        customer.subscription.deleted
+        customer.subscription.created
         customer.subscription.updated
+        customer.subscription.deleted
         charge.refunded
         charge.dispute.created
         charge.dispute.closed
@@ -65,7 +66,7 @@ module Belt
               handle_invoice_payment_failed(event.data.object)
             when 'customer.subscription.deleted'
               handle_subscription_deleted(event.data.object)
-            when 'customer.subscription.updated'
+            when 'customer.subscription.created', 'customer.subscription.updated'
               handle_subscription_updated(event.data.object)
             when 'charge.refunded'
               handle_charge_refunded(event.data.object)
@@ -192,7 +193,7 @@ module Belt
 
           Belt::Pay.log(:info, 'Belt::Pay::WebhookHandler: subscription deleted',
                         customer_id: customer_id, subscription_id: value(subscription, :id))
-          nil
+          sync_subscription(subscription)
         end
 
         def handle_subscription_updated(subscription)
@@ -202,6 +203,103 @@ module Belt
           Belt::Pay.log(:info, 'Belt::Pay::WebhookHandler: subscription updated',
                         customer_id: customer_id, subscription_id: value(subscription, :id),
                         status: value(subscription, :status))
+          sync_subscription(subscription)
+        end
+
+        # Bring the customer's plan and the subscription's transaction in step with
+        # the subscription. The event says what was true when it was sent, and
+        # events can arrive late, out of order or again, so Stripe is asked what is
+        # true now. A Stripe error is raised and the event retried.
+        # @return [Transaction, nil]
+        def sync_subscription(event_subscription)
+          subscription = Belt::Pay.provider.retrieve_subscription(value(event_subscription, :id))
+          customer_id = app_customer_id(subscription) || app_customer_id(event_subscription)
+          status = value(subscription, :status).to_s
+
+          sync_customer_plan(subscription, customer_id, status)
+          settle_subscription(value(subscription, :id), status)
+        end
+
+        # `pay_plan` is what Billable#plan, #plan_allows? and #within_limit? read, so
+        # it is set when the subscription is active or trialing and taken back when
+        # it is canceled, unpaid or expired before its first payment. Other statuses
+        # (incomplete, past_due, paused) leave it as it is.
+        def sync_customer_plan(subscription, customer_id, status)
+          active = Subscription::ACTIVE_STATUSES.include?(status)
+          return unless active || Subscription::ENDED_STATUSES.include?(status)
+
+          customer = find_customer(customer_id)
+          return unless customer.respond_to?(:pay_plan=) && customer.respond_to?(:pay_subscription_id=)
+
+          subscription_id = value(subscription, :id)
+          current = customer.pay_subscription_id.to_s
+          # Only the customer's own subscription moves their plan: not an older one
+          # ending after they took out a new one.
+          return if !current.empty? && current != subscription_id
+          return if !active && current.empty?
+
+          plan_key = subscription_plan_key(subscription)
+          before = [customer.pay_subscription_id, customer.pay_plan]
+          if active
+            customer.pay_subscription_id = subscription_id
+            customer.pay_plan = plan_key if plan_key
+          else
+            # Take back the plan this subscription granted, not one held another way.
+            customer.pay_plan = nil if plan_key.nil? || customer.pay_plan.to_s == plan_key
+            customer.pay_subscription_id = nil unless status == 'unpaid'
+          end
+          return if before == [customer.pay_subscription_id, customer.pay_plan]
+
+          customer.save(validate: false)
+          Belt::Pay.log(:info, 'Belt::Pay::WebhookHandler: customer plan updated',
+                        customer_id: customer_id, subscription_id: subscription_id,
+                        status: status, pay_plan: customer.pay_plan)
+        end
+
+        # The transaction Subscription.create recorded under the subscription id:
+        # completed once the subscription is active, failed if it expired unpaid,
+        # canceled when it ends.
+        def settle_subscription(subscription_id, status)
+          transaction = Transaction.lookup(subscription_id)
+          return nil unless transaction
+
+          target = if Subscription::ACTIVE_STATUSES.include?(status) then 'completed'
+                   elsif status == 'incomplete_expired' then 'failed'
+                   elsif status == 'canceled' then 'canceled'
+                   end
+          movable = target == 'canceled' ? %w[pending completed] : %w[pending]
+          if target && movable.include?(transaction.status)
+            transaction.status = target
+            transaction.save!
+          end
+          transaction
+        end
+
+        # The declared plan a subscription is for: the `plan` its metadata carries
+        # (Belt::Pay.subscribe stamps it), else the plan declared for its price.
+        def subscription_plan_key(subscription)
+          stamped = value(value(subscription, :metadata), :plan)
+          return stamped.to_s unless stamped.to_s.empty?
+
+          items = value(value(subscription, :items), :data)
+          price_id = reference_id(value(Array(items).first, :price))
+          Belt::Pay.plan_for_price(price_id)&.key&.to_s
+        end
+
+        def find_customer(customer_id)
+          model = Belt::Pay.configuration.customer_model
+          unless model
+            Belt::Pay.log(:error,
+                          'Belt::Pay::WebhookHandler: customer_class is not configured, so pay_plan cannot ' \
+                          'follow the subscription; set Belt::Pay.configuration.customer_class',
+                          customer_id: customer_id)
+            return nil
+          end
+
+          model.find(customer_id)
+        rescue ActiveItem::RecordNotFound
+          Belt::Pay.log(:warn, 'Belt::Pay::WebhookHandler: subscription for an unknown customer',
+                        customer_id: customer_id)
           nil
         end
 

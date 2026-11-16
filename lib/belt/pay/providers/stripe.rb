@@ -187,6 +187,14 @@ module Belt
           false
         end
 
+        # The subscription as Stripe holds it now.
+        # @param subscription_id [String] Stripe subscription ID
+        # @return [Stripe::Subscription]
+        def retrieve_subscription(subscription_id)
+          ensure_api_key!
+          ::Stripe::Subscription.retrieve(subscription_id)
+        end
+
         # Generate a billing portal session URL.
         # @param pay_customer_id [String] Stripe customer ID
         # @param return_url [String]

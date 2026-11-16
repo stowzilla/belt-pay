@@ -51,10 +51,19 @@ RSpec.describe Belt::Pay::Subscription do
         customer_id: 'cust-123',
         subscription_id: 'sub_new_789',
         amount_cents: 0,
+        status: 'completed',
         metadata: { plan: 'pro', price_id: 'price_xxx' }
       )
 
       described_class.create(customer, price_id: 'price_xxx', metadata: { plan: 'pro' })
+    end
+
+    it 'records the transaction as pending while the first payment is outstanding' do
+      allow(provider).to receive(:create_subscription)
+        .and_return(subscription_result.merge(status: 'incomplete'))
+      expect(Belt::Pay::Transaction).to receive(:record_subscription).with(hash_including(status: 'pending'))
+
+      described_class.create(customer, price_id: 'price_xxx')
     end
 
     it 'returns the subscription result' do
